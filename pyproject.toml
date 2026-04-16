@@ -1,0 +1,17 @@
+[project]
+name = "intent-trace"
+version = "0.1.0"
+description = "Benchmark for measuring intent transmission through code diffs"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "anthropic>=0.39.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
