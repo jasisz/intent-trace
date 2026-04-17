@@ -59,6 +59,7 @@ def load_prompt_text(program: str, prompt_name: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("input", nargs="?", help="slices.jsonl (default: latest completed)")
+    ap.add_argument("--resume", help="output dir from prior partial run to continue into")
     args = ap.parse_args()
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -75,16 +76,40 @@ def main() -> int:
             rows.append(json.loads(line))
     print(f"Slices:  {len(rows)}")
 
-    run_dir = Path("results") / f"gpt_added_{time.strftime('%Y%m%d_%H%M%S')}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    out_path = run_dir / "slices.jsonl"
+    if args.resume:
+        run_dir = Path(args.resume)
+        out_path = run_dir / "slices.jsonl"
+        done_keys: set[tuple] = set()
+        if out_path.exists():
+            for line in out_path.read_text().splitlines():
+                if not line.strip(): continue
+                r = json.loads(line)
+                # Consider a slice done if judgment_prompt.individual has our GPT_MODEL entry.
+                if (r.get("judgment_prompt", {}).get("individual", {}).get(GPT_MODEL)):
+                    done_keys.add((r.get("program"), r.get("prompt"), r.get("lang"), r.get("view")))
+        print(f"Resume:  {len(done_keys)} slices already have {GPT_MODEL} judgment")
+    else:
+        run_dir = Path("results") / f"gpt_added_{time.strftime('%Y%m%d_%H%M%S')}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        out_path = run_dir / "slices.jsonl"
+        done_keys = set()
     print(f"Output:  {out_path}\n")
 
     # Cache quality judgments by (program, prompt, lang) since they reuse across views.
     quality_cache: dict[tuple, dict] = {}
 
+    # If resuming, rebuild the already-written output so we don't duplicate rows.
+    if args.resume and done_keys:
+        # Rewrite out_path keeping only rows that have our judge, so we pick up from there.
+        # Simpler: skip in the loop below, and let completed file grow.
+        pass
+
     for i, r in enumerate(rows, 1):
+        key_tuple = (r.get("program"), r.get("prompt"), r.get("lang"), r.get("view"))
         key = f"{r.get('program','?')}/{r.get('prompt','?')}/{r.get('lang','?')}/{r.get('view','?')}"
+        if key_tuple in done_keys:
+            print(f"  [{i}/{len(rows)}] {key} — skip (resumed)", flush=True)
+            continue
         print(f"  [{i}/{len(rows)}] {key}", flush=True)
         try:
             prompt_text = load_prompt_text(r["program"], r["prompt"])

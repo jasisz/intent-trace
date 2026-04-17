@@ -49,15 +49,13 @@ mpl.rcParams.update({
 
 
 def load_latest(results_root: Path) -> list[dict]:
-    candidates = list(results_root.glob("ensemble_*/slices.jsonl")) + list(
-        results_root.glob("gpt_added_*/slices.jsonl")
-    )
-    if not candidates:
-        raise SystemExit("no slices.jsonl found in results/")
-    latest = max(candidates, key=lambda p: p.stat().st_mtime)
-    print(f"source: {latest}")
+    """Canonical reader = Sonnet (merged, 5-judge)."""
+    merged = results_root / "merged" / "sonnet.jsonl"
+    if not merged.exists():
+        raise SystemExit("results/merged/sonnet.jsonl missing — run scripts/merge_judge_runs.py first")
+    print(f"source: {merged}")
     rows: list[dict] = []
-    for line in latest.read_text().splitlines():
+    for line in merged.read_text().splitlines():
         if not line.strip():
             continue
         r = json.loads(line)
@@ -190,9 +188,9 @@ def plot_ablation(agg: dict, out_path: Path) -> None:
 
 
 READER_PATHS = {
-    "Sonnet": "results/ensemble_20260417_100608/slices.jsonl",
-    "gpt-4.1": "results/ensemble_20260417_125110/slices.jsonl",
-    "Gemini Flash": "results/ensemble_20260417_131755/slices.jsonl",
+    "Sonnet": "results/merged/sonnet.jsonl",
+    "gpt-4.1": "results/merged/gpt4.1.jsonl",
+    "Gemini Flash": "results/merged/gemini.jsonl",
 }
 READER_COLORS = {
     "Sonnet": AMBER,
