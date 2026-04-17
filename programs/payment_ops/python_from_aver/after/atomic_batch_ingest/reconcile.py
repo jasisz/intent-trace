@@ -2,6 +2,15 @@
 
 The goal is not perfect accounting; it is to make mismatch rules visible as normal
 functions instead of hiding them behind batch jobs and SQL views.
+
+Design decisions:
+
+* Settlement rows are treated as evidence to compare against replayed state,
+  not as unquestioned truth that overwrites it. Settlement files are
+  operationally important but not always clean or complete, so compare-and-
+  escalate into manual-review cases leaves room for explicit review instead of
+  silently letting either side win. Alternatives considered: settlement wins
+  always, realtime wins always.
 """
 
 from __future__ import annotations

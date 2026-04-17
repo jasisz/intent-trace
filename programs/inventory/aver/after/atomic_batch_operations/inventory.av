@@ -189,6 +189,8 @@ fn receiveShipmentChecked(inv: Inventory, warehouseId: String, skuId: String, qt
 
 verify receiveShipmentChecked
     receiveShipmentChecked(emptyInventory(), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
+    receiveShipmentChecked(seededInventory(), "W1", "S9", 5) => Result.Err("Unknown sku: S9")
+    receiveShipmentChecked(seededInventory(), "W1", "S1", 5) => Result.Ok(applyReceive(seededInventory(), "W1", "S1", 5))
 
 fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Adds qty to onHand. Fails on unknown warehouse/sku or non-positive qty."
@@ -199,6 +201,7 @@ fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int)
 verify receiveShipment
     receiveShipment(emptyInventory(), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
     receiveShipment(emptyInventory(), "W1", "S1", 0) => Result.Err("Shipment qty must be positive")
+    receiveShipment(seededInventory(), "W1", "S1", 5) => Result.Ok(applyReceive(seededInventory(), "W1", "S1", 5))
 
 fn applyReserve(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: adds qty to reserved at (warehouse, sku). Assumes inputs are valid and sufficient."
@@ -218,6 +221,7 @@ fn reserveIfAvailable(inv: Inventory, warehouseId: String, skuId: String, qty: I
 
 verify reserveIfAvailable
     reserveIfAvailable(emptyInventory(), "W1", "S1", 1) => Result.Err("Insufficient available stock: need 1, have 0")
+    reserveIfAvailable(seededInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(seededInventory(), "W1", "S1", 3))
 
 fn reserveStockChecked(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Reserves after warehouse+sku validation. Delegates to reserveIfAvailable."
@@ -229,6 +233,8 @@ fn reserveStockChecked(inv: Inventory, warehouseId: String, skuId: String, qty: 
 
 verify reserveStockChecked
     reserveStockChecked(emptyInventory(), "W1", "S1", 1) => Result.Err("Unknown warehouse: W1")
+    reserveStockChecked(seededInventory(), "W1", "S9", 1) => Result.Err("Unknown sku: S9")
+    reserveStockChecked(seededInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(seededInventory(), "W1", "S1", 3))
 
 fn reserveStock(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Reserves qty for an order. Fails if qty would exceed available (onHand - reserved)."
@@ -239,6 +245,7 @@ fn reserveStock(inv: Inventory, warehouseId: String, skuId: String, qty: Int) ->
 verify reserveStock
     reserveStock(emptyInventory(), "W1", "S1", 0) => Result.Err("Reserve qty must be positive")
     reserveStock(emptyInventory(), "W1", "S1", 1) => Result.Err("Unknown warehouse: W1")
+    reserveStock(seededInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(seededInventory(), "W1", "S1", 3))
 
 fn applyRelease(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: subtracts qty from reserved. Assumes qty <= current reserved."
@@ -257,6 +264,7 @@ fn releaseIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: In
 
 verify releaseIfReserved
     releaseIfReserved(emptyInventory(), "W1", "S1", 1) => Result.Err("Cannot release more than reserved: requested 1, reserved 0")
+    releaseIfReserved(applyReserve(seededInventory(), "W1", "S1", 3), "W1", "S1", 2) => Result.Ok(applyRelease(applyReserve(seededInventory(), "W1", "S1", 3), "W1", "S1", 2))
 
 fn releaseReservation(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Cancels a previously made reservation. Fails if qty exceeds current reserved."
@@ -266,6 +274,7 @@ fn releaseReservation(inv: Inventory, warehouseId: String, skuId: String, qty: I
 
 verify releaseReservation
     releaseReservation(emptyInventory(), "W1", "S1", 0) => Result.Err("Release qty must be positive")
+    releaseReservation(applyReserve(seededInventory(), "W1", "S1", 3), "W1", "S1", 2) => Result.Ok(applyRelease(applyReserve(seededInventory(), "W1", "S1", 3), "W1", "S1", 2))
 
 fn applyFulfill(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: removes qty from both onHand and reserved. Assumes qty <= current reserved."
@@ -284,6 +293,7 @@ fn fulfillIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: In
 
 verify fulfillIfReserved
     fulfillIfReserved(emptyInventory(), "W1", "S1", 1) => Result.Err("Cannot fulfill more than reserved: requested 1, reserved 0")
+    fulfillIfReserved(applyReserve(seededInventory(), "W1", "S1", 3), "W1", "S1", 2) => Result.Ok(applyFulfill(applyReserve(seededInventory(), "W1", "S1", 3), "W1", "S1", 2))
 
 fn fulfillReservation(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Ships qty out: removes it from both reserved and onHand. Fails if qty exceeds reserved."
@@ -293,6 +303,7 @@ fn fulfillReservation(inv: Inventory, warehouseId: String, skuId: String, qty: I
 
 verify fulfillReservation
     fulfillReservation(emptyInventory(), "W1", "S1", 0) => Result.Err("Fulfill qty must be positive")
+    fulfillReservation(applyReserve(seededInventory(), "W1", "S1", 3), "W1", "S1", 2) => Result.Ok(applyFulfill(applyReserve(seededInventory(), "W1", "S1", 3), "W1", "S1", 2))
 
 fn applyRebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: moves qty of unreserved stock from 'fromId' to 'toId'. Assumes source has qty available."
@@ -314,6 +325,7 @@ fn rebalanceIfAvailable(inv: Inventory, fromId: String, toId: String, skuId: Str
 
 verify rebalanceIfAvailable
     rebalanceIfAvailable(emptyInventory(), "W1", "W2", "S1", 1) => Result.Err("Insufficient stock at W1: need 1, have 0")
+    rebalanceIfAvailable(seededInventory(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(seededInventory(), "W1", "W2", "S1", 3))
 
 fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Rebalances after warehouse and sku validation."
@@ -327,6 +339,8 @@ fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String,
 
 verify rebalanceChecked
     rebalanceChecked(emptyInventory(), "W1", "W2", "S1", 1) => Result.Err("Unknown warehouse: W1")
+    rebalanceChecked(seededInventory(), "W1", "W2", "S9", 1) => Result.Err("Unknown sku: S9")
+    rebalanceChecked(seededInventory(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(seededInventory(), "W1", "W2", "S1", 3))
 
 fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Transfers qty of unreserved stock from 'fromId' warehouse to 'toId' warehouse."
@@ -336,6 +350,7 @@ fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: I
 
 verify rebalance
     rebalance(emptyInventory(), "W1", "W2", "S1", 0) => Result.Err("Rebalance qty must be positive")
+    rebalance(seededInventory(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(seededInventory(), "W1", "W2", "S1", 3))
 
 fn annotateBatchError(opKind: String, index: Int, err: String) -> String
     ? "Prefixes a batch step error with the operation kind and zero-based index."
@@ -380,6 +395,7 @@ verify reserveBatchFrom
 
 verify reserveBatchStep
     reserveBatchStep(emptyInventory(), ReserveOp(warehouseId = "W1", skuId = "S1", qty = 1), [], 0) => Result.Err("reserve[0]: Unknown warehouse: W1")
+    reserveBatchStep(seededInventory(), ReserveOp(warehouseId = "W1", skuId = "S1", qty = 3), [], 0) => Result.Ok(applyReserve(seededInventory(), "W1", "S1", 3))
 
 fn reserveBatch(inv: Inventory, ops: List<ReserveOp>) -> Result<Inventory, String>
     ? "Reserves stock for a list of operations atomically. Either every reservation is applied"
@@ -421,6 +437,7 @@ verify receiveShipmentBatchFrom
 
 verify receiveShipmentBatchStep
     receiveShipmentBatchStep(emptyInventory(), ReceiveOp(warehouseId = "W1", skuId = "S1", qty = 5), [], 0) => Result.Err("receive[0]: Unknown warehouse: W1")
+    receiveShipmentBatchStep(seededInventory(), ReceiveOp(warehouseId = "W1", skuId = "S1", qty = 5), [], 0) => Result.Ok(applyReceive(seededInventory(), "W1", "S1", 5))
 
 fn receiveShipmentBatch(inv: Inventory, ops: List<ReceiveOp>) -> Result<Inventory, String>
     ? "Receives a truckload of shipments atomically. Either every line is applied or the"
@@ -461,6 +478,7 @@ verify rebalanceBatchFrom
 
 verify rebalanceBatchStep
     rebalanceBatchStep(emptyInventory(), RebalanceOp(fromId = "W1", toId = "W2", skuId = "S1", qty = 1), [], 0) => Result.Err("rebalance[0]: Unknown warehouse: W1")
+    rebalanceBatchStep(seededInventory(), RebalanceOp(fromId = "W1", toId = "W2", skuId = "S1", qty = 3), [], 0) => Result.Ok(applyRebalance(seededInventory(), "W1", "W2", "S1", 3))
 
 fn rebalanceBatch(inv: Inventory, ops: List<RebalanceOp>) -> Result<Inventory, String>
     ? "Applies a list of rebalance moves atomically. Either every move is applied or the"
@@ -491,6 +509,7 @@ fn reorderPointForSku(inv: Inventory, skuId: String) -> Option<Int>
 
 verify reorderPointForSku
     reorderPointForSku(emptyInventory(), "S1") => Option.None
+    reorderPointForSku(seededInventory(), "S1") => Option.Some(3)
 
 fn needsReorder(inv: Inventory, warehouseId: String, skuId: String) -> Bool
     ? "True when available stock at this warehouse falls at or below the sku's reorder point."
@@ -500,6 +519,7 @@ fn needsReorder(inv: Inventory, warehouseId: String, skuId: String) -> Bool
 
 verify needsReorder
     needsReorder(emptyInventory(), "W1", "S1") => false
+    needsReorder(seededInventory(), "W2", "S1") => true
 
 fn sumOnHand(inv: Inventory, skuId: String, warehouseIds: List<String>) -> Int
     ? "Folds onHand across warehouse ids. Helper for totalOnHand."

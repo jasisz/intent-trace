@@ -1,7 +1,7 @@
 """Pure replay and dedupe helpers for the payment ledger.
 
 Backoffice review gets easier when webhook ingestion becomes append-only events
-and every current state is rebuilt from those events in plain code.
+and every current state is rebuilt from those events by one pure rebuilder.
 
 This module is organised around one canonical entry point,
 ``rebuildPaymentState``, which reconstructs a ``PaymentState`` from scratch
@@ -13,6 +13,18 @@ The benefit this unlocks is replay: an operator can ask "what would the state
 look like if event X had never arrived?" by filtering the event list and
 re-invoking the rebuilder — see ``rebuildPaymentStateWithout`` and
 ``rebuildPaymentStateWhere``.
+
+Design decisions:
+
+* A single pure ``rebuildPaymentState`` is the only function that turns events
+  into state; every other ledger operation, including ``replayPayment`` and
+  ``replayAll``, composes on top of it. Derivation and event-application used
+  to be interleaved in ``replayPayment``, which made it easy for
+  field-updating helpers to drift out of sync with the event log. Keeping one
+  canonical rebuilder lets replay experiments like "what if event X had never
+  arrived?" become a filter plus one call, and guarantees every code path
+  sees the same derived state. Alternatives considered: incremental field
+  updates per operation, cached state with patches.
 """
 
 from __future__ import annotations

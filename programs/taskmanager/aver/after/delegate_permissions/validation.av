@@ -57,12 +57,23 @@ fn isOwnerOrAdmin(u: User, p: Project) -> Bool
         true -> true
         false -> isAdmin(u)
 
+verify isOwnerOrAdmin
+    isOwnerOrAdmin(User(id = "u1", name = "A", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = [])) => true
+    isOwnerOrAdmin(User(id = "u9", name = "A", role = Role.Admin), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = [])) => true
+    isOwnerOrAdmin(User(id = "u2", name = "D", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"])) => false
+
 fn canAssign(actor: User, project: Project, assignee: User) -> Bool
     ? "Assigning a task: actor must have write access to the project AND the target"
       "assignee must already be a project member."
     match canModifyProject(actor, project)
         false -> false
         true -> isMember(project, assignee.id)
+
+verify canAssign
+    canAssign(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1", "u2"], delegateIds = []), User(id = "u2", name = "B", role = Role.Member)) => true
+    canAssign(User(id = "u2", name = "D", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1", "u3"], delegateIds = ["u2"]), User(id = "u3", name = "C", role = Role.Member)) => true
+    canAssign(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []), User(id = "u3", name = "C", role = Role.Member)) => false
+    canAssign(User(id = "u9", name = "X", role = Role.Viewer), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1", "u9"], delegateIds = []), User(id = "u1", name = "O", role = Role.Member)) => false
 
 fn canModifyProject(actor: User, project: Project) -> Bool
     ? "Changing project membership or metadata: owner, Admin, or any user the owner"
@@ -86,6 +97,13 @@ fn canTransitionTo(current: Status, next: Status) -> Bool
         Status.Blocked -> canFromBlocked(next)
         Status.Done -> false
 
+verify canTransitionTo
+    canTransitionTo(Status.Todo, Status.InProgress) => true
+    canTransitionTo(Status.Todo, Status.Done) => false
+    canTransitionTo(Status.Done, Status.InProgress) => false
+    canTransitionTo(Status.InProgress, Status.Done) => true
+    canTransitionTo(Status.Blocked, Status.InProgress) => true
+
 fn canFromTodo(next: Status) -> Bool
     ? "Allowed next states from Todo."
     match next
@@ -93,6 +111,12 @@ fn canFromTodo(next: Status) -> Bool
         Status.Blocked -> true
         Status.Todo -> false
         Status.Done -> false
+
+verify canFromTodo
+    canFromTodo(Status.InProgress) => true
+    canFromTodo(Status.Blocked) => true
+    canFromTodo(Status.Todo) => false
+    canFromTodo(Status.Done) => false
 
 fn canFromInProgress(next: Status) -> Bool
     ? "Allowed next states from InProgress."
@@ -102,6 +126,12 @@ fn canFromInProgress(next: Status) -> Bool
         Status.Todo -> true
         Status.InProgress -> false
 
+verify canFromInProgress
+    canFromInProgress(Status.Done) => true
+    canFromInProgress(Status.Blocked) => true
+    canFromInProgress(Status.Todo) => true
+    canFromInProgress(Status.InProgress) => false
+
 fn canFromBlocked(next: Status) -> Bool
     ? "Allowed next states from Blocked."
     match next
@@ -110,9 +140,8 @@ fn canFromBlocked(next: Status) -> Bool
         Status.Blocked -> false
         Status.Done -> false
 
-verify canTransitionTo
-    canTransitionTo(Status.Todo, Status.InProgress) => true
-    canTransitionTo(Status.Todo, Status.Done) => false
-    canTransitionTo(Status.Done, Status.InProgress) => false
-    canTransitionTo(Status.InProgress, Status.Done) => true
-    canTransitionTo(Status.Blocked, Status.InProgress) => true
+verify canFromBlocked
+    canFromBlocked(Status.InProgress) => true
+    canFromBlocked(Status.Todo) => true
+    canFromBlocked(Status.Blocked) => false
+    canFromBlocked(Status.Done) => false

@@ -13,6 +13,33 @@ The module is split into two concerns that share this single file:
 
 Operations raise ``ValueError`` on invalid input (unknown warehouse/sku,
 non-positive qty, over-commit).
+
+Design decisions:
+
+* Reservations are separated from the core inventory. The original design put
+  both on-hand stock and pending reservations on a single record, which
+  conflated two concerns: a warehouse-management view (where are units
+  sitting?) and an order-acceptance view (how many units are already
+  promised?). Splitting them lets the core ``Inventory`` stay usable on its
+  own — shipping, receiving, and reporting do not need to know reservations
+  exist — while reservations are layered on top as a separate record that
+  holds a reference to a core ``Inventory`` plus a per-(warehouse, sku)
+  reserved counter. Alternatives considered: keep one combined record,
+  reservations as a separate parallel store, optional reserved field.
+
+* Available stock and reserved stock stay tracked separately (reserved lives
+  on the reservation layer; on-hand lives on the core). Collapsing reserved
+  into available would allow a second reservation to over-commit the same
+  physical units; keeping the two counters apart makes the invariant
+  reserved <= on_hand checkable at any point. Alternatives considered: single
+  available counter, negative available as reserved.
+
+* Invalid operations raise ValueError rather than returning a tagged result.
+  Unknown warehouse/sku, non-positive quantities, and over-reservations are
+  all expected at runtime, and Python callers branch on them via try/except.
+  (The Aver source returns Result to make failure modes explicit in the call
+  site; here the Pythonic equivalent is a narrow exception type.)
+  Alternatives considered: silent no-op, panic.
 """
 from __future__ import annotations
 
@@ -47,26 +74,32 @@ class Inventory:
 
 
 def empty_inventory() -> Inventory:
+    """Build an empty core inventory with no warehouses, SKUs, or on-hand stock."""
     return Inventory()
 
 
 def register_sku(inv: Inventory, s: Sku) -> Inventory:
+    """Add or replace an SKU definition in the core inventory."""
     return replace(inv, skus={**inv.skus, s.id: s})
 
 
 def register_warehouse(inv: Inventory, w: Warehouse) -> Inventory:
+    """Add or replace a warehouse definition in the core inventory."""
     return replace(inv, warehouses={**inv.warehouses, w.id: w})
 
 
 def known_warehouse(inv: Inventory, warehouse_id: str) -> bool:
+    """True if the warehouse has been registered in the core inventory."""
     return warehouse_id in inv.warehouses
 
 
 def known_sku(inv: Inventory, sku_id: str) -> bool:
+    """True if the SKU has been registered in the core inventory."""
     return sku_id in inv.skus
 
 
 def get_on_hand(inv: Inventory, warehouse_id: str, sku_id: str) -> int:
+    """Return the on-hand quantity at (warehouse, sku); zero if none recorded."""
     per_sku = inv.on_hand.get(warehouse_id)
     if per_sku is None:
         return 0
@@ -74,6 +107,7 @@ def get_on_hand(inv: Inventory, warehouse_id: str, sku_id: str) -> int:
 
 
 def set_on_hand(inv: Inventory, warehouse_id: str, sku_id: str, qty: int) -> Inventory:
+    """Store an on-hand quantity for (warehouse, sku); overwrite any previous value."""
     per_sku = dict(inv.on_hand.get(warehouse_id, {}))
     per_sku[sku_id] = qty
     new_on_hand = {**inv.on_hand, warehouse_id: per_sku}
@@ -149,18 +183,22 @@ class StockLevel:
 
 
 def empty_reserved_inventory() -> ReservedInventory:
+    """Build an empty reservation-aware inventory wrapping an empty core."""
     return ReservedInventory()
 
 
 def reserved_register_sku(ri: ReservedInventory, s: Sku) -> ReservedInventory:
+    """Register an SKU on the underlying core inventory."""
     return replace(ri, core=register_sku(ri.core, s))
 
 
 def reserved_register_warehouse(ri: ReservedInventory, w: Warehouse) -> ReservedInventory:
+    """Register a warehouse on the underlying core inventory."""
     return replace(ri, core=register_warehouse(ri.core, w))
 
 
 def get_reserved(ri: ReservedInventory, warehouse_id: str, sku_id: str) -> int:
+    """Return the reserved quantity at (warehouse, sku); zero if none recorded."""
     per_sku = ri.reserved.get(warehouse_id)
     if per_sku is None:
         return 0
@@ -168,6 +206,7 @@ def get_reserved(ri: ReservedInventory, warehouse_id: str, sku_id: str) -> int:
 
 
 def _set_reserved(ri: ReservedInventory, warehouse_id: str, sku_id: str, qty: int) -> ReservedInventory:
+    """Store a reserved quantity for (warehouse, sku); overwrite any previous value."""
     per_sku = dict(ri.reserved.get(warehouse_id, {}))
     per_sku[sku_id] = qty
     new_reserved = {**ri.reserved, warehouse_id: per_sku}
@@ -175,6 +214,7 @@ def _set_reserved(ri: ReservedInventory, warehouse_id: str, sku_id: str, qty: in
 
 
 def get_level(ri: ReservedInventory, warehouse_id: str, sku_id: str) -> StockLevel:
+    """Return a combined snapshot of on-hand and reserved units at (warehouse, sku)."""
     return StockLevel(
         on_hand=get_on_hand(ri.core, warehouse_id, sku_id),
         reserved=get_reserved(ri, warehouse_id, sku_id),
@@ -182,6 +222,7 @@ def get_level(ri: ReservedInventory, warehouse_id: str, sku_id: str) -> StockLev
 
 
 def available_stock(ri: ReservedInventory, warehouse_id: str, sku_id: str) -> int:
+    """Return units available for new reservations: on_hand minus reserved."""
     return get_on_hand(ri.core, warehouse_id, sku_id) - get_reserved(ri, warehouse_id, sku_id)
 
 

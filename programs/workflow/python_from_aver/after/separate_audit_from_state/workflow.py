@@ -18,6 +18,27 @@ The core transitions (``submit_core``, ``approve_core``, ``reject_core``,
 ``pay_core``) operate only on ``ReportCore`` and return a new ``ReportCore``.
 The audited transitions (``submit``, ``approve``, ``reject``, ``pay``) call
 the core transitions and additionally append an ``Event`` to the audit log.
+
+Design decisions:
+
+* Status is a closed sum type (Enum), not a string. Expense reports have a
+  small, fixed set of lifecycle states, and closing the type lets the
+  type-checker flag any future code path that forgets to handle one.
+  String-typed status fields would silently accept typos and new values.
+  Alternatives considered: string status codes, integer status codes.
+
+* The audit trail lives alongside the core on a wrapper record
+  (``AuditedReport``), not inline on the core and not in a fully external
+  store. The previous inline shape mixed current lifecycle fields with the
+  full event history on one record: pure business-logic queries ended up
+  carrying the audit payload, and the type gave no signal about which
+  concern each caller touched. Splitting yields ``ReportCore`` for
+  state-only queries and ``AuditedReport`` for the combined view.
+  Transition semantics are unchanged; only the location of the event list
+  moves. An externalised audit store was rejected because replay and
+  explanation still want the events on hand, just not inside the core
+  record. Alternatives considered: inline audit log on the core, external
+  audit store, no audit log.
 """
 from __future__ import annotations
 
@@ -86,14 +107,17 @@ def empty_core(report_id: str, submitter_id: str) -> ReportCore:
 
 
 def status_of(c: ReportCore) -> Status:
+    """Return the current lifecycle status of a core report."""
     return c.status
 
 
 def amount_is_positive(m: Money) -> bool:
+    """True if the money amount is strictly positive."""
     return m.cents > 0
 
 
 def title_is_present(c: ReportCore) -> bool:
+    """True if the core report title is non-empty."""
     return len(c.title) > 0
 
 
@@ -110,6 +134,7 @@ def with_title_and_amount(c: ReportCore, title: str, amount: Money) -> ReportCor
 
 
 def _approver_has_authority(approver: User, amount: Money) -> bool:
+    """True if the approver's limit covers the report amount."""
     return approver.approval_limit_cents >= amount.cents
 
 
@@ -159,6 +184,7 @@ def empty_report(report_id: str, submitter_id: str) -> AuditedReport:
 
 
 def core_of(r: AuditedReport) -> ReportCore:
+    """Return the pure lifecycle core, stripped of the audit trail."""
     return r.core
 
 
@@ -168,10 +194,12 @@ def events_of(r: AuditedReport) -> list[Event]:
 
 
 def audited_status_of(r: AuditedReport) -> Status:
+    """Return the current lifecycle status of an audited report."""
     return r.core.status
 
 
 def _with_event(r: AuditedReport, core: ReportCore, e: Event) -> AuditedReport:
+    """Build a new AuditedReport with an updated core and an appended event."""
     return AuditedReport(core=core, events=r.events + (e,))
 
 

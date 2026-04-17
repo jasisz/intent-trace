@@ -3,6 +3,23 @@
 Available stock is tracked separately from reserved stock so that pending orders do not
 silently over-commit the same physical units. Operations raise ValueError on invalid
 input (unknown warehouse/sku, non-positive qty, over-commit).
+
+Design decisions:
+
+* Available stock and reserved stock are tracked separately on each StockLevel,
+  not collapsed into a single counter. Reserved stock represents orders that
+  have been accepted but not yet shipped; collapsing reserved into available
+  would allow a second reservation to over-commit the same physical units.
+  Tracking them separately makes the invariant reserved <= on_hand checkable
+  at any point. Alternatives considered: single available counter, negative
+  available as reserved.
+
+* Invalid operations raise ValueError rather than returning a tagged result.
+  Unknown warehouse/sku, non-positive quantities, and over-reservations are
+  all expected at runtime, and Python callers branch on them via try/except.
+  (The Aver source returns Result to make failure modes explicit in the call
+  site; here the Pythonic equivalent is a narrow exception type.) Alternatives
+  considered: silent no-op, panic.
 """
 from __future__ import annotations
 
@@ -36,18 +53,22 @@ class Inventory:
 
 
 def empty_inventory() -> Inventory:
+    """Build an empty inventory with no warehouses, SKUs, or stock."""
     return Inventory()
 
 
 def register_sku(inv: Inventory, s: Sku) -> Inventory:
+    """Add or replace an SKU definition."""
     return replace(inv, skus={**inv.skus, s.id: s})
 
 
 def register_warehouse(inv: Inventory, w: Warehouse) -> Inventory:
+    """Add or replace a warehouse definition."""
     return replace(inv, warehouses={**inv.warehouses, w.id: w})
 
 
 def get_level(inv: Inventory, warehouse_id: str, sku_id: str) -> StockLevel:
+    """Return the stock level at (warehouse, sku); zero if none recorded."""
     per_sku = inv.levels.get(warehouse_id)
     if per_sku is None:
         return StockLevel(on_hand=0, reserved=0)
@@ -55,6 +76,7 @@ def get_level(inv: Inventory, warehouse_id: str, sku_id: str) -> StockLevel:
 
 
 def set_level(inv: Inventory, warehouse_id: str, sku_id: str, lvl: StockLevel) -> Inventory:
+    """Store a stock level for (warehouse, sku); overwrite any previous value."""
     per_sku = dict(inv.levels.get(warehouse_id, {}))
     per_sku[sku_id] = lvl
     new_levels = {**inv.levels, warehouse_id: per_sku}
@@ -62,15 +84,18 @@ def set_level(inv: Inventory, warehouse_id: str, sku_id: str, lvl: StockLevel) -
 
 
 def available_stock(inv: Inventory, warehouse_id: str, sku_id: str) -> int:
+    """Return units currently available for new reservations: on_hand minus reserved."""
     lvl = get_level(inv, warehouse_id, sku_id)
     return lvl.on_hand - lvl.reserved
 
 
 def known_warehouse(inv: Inventory, warehouse_id: str) -> bool:
+    """True if the warehouse has been registered."""
     return warehouse_id in inv.warehouses
 
 
 def known_sku(inv: Inventory, sku_id: str) -> bool:
+    """True if the SKU has been registered."""
     return sku_id in inv.skus
 
 

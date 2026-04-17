@@ -2,6 +2,23 @@
 
 The project accepts ugly external spellings, but it stores one internal event model
 so replay and reconciliation stay provider-agnostic.
+
+Design decisions:
+
+* Incoming provider payloads are collapsed into a canonical event and settlement
+  model as the very first step, instead of letting provider-specific statuses
+  leak through into replay and reconciliation. Dirty backoffice work starts
+  with incompatible provider payloads, and normalizing early keeps replay,
+  reconciliation, and case logic typed and reviewable. Alternatives considered:
+  provider-specific replay everywhere, stringly-typed statuses.
+
+* A whole burst of webhooks is normalized in one Result-chained fold so the
+  ledger stays all-or-nothing. Providers burst 50-200 webhooks at once, and
+  per-event normalization used to commit the first 46 rows and then strand
+  operators with a half-updated payment when the 47th row failed, so batch
+  normalization keeps the ingest transactional at the burst boundary.
+  Alternatives considered: per-event normalize-then-commit, two parallel
+  ingest paths.
 """
 
 from __future__ import annotations

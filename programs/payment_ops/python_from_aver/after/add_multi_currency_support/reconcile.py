@@ -12,6 +12,24 @@ Multi-currency rules (this refactor):
   ``settlement_foreign_currency`` case with enough detail for manual review.
 * Summing across currencies is never silent: :func:`_totalByKindInCurrency`
   only ever sums one currency at a time.
+
+Design decisions:
+
+* Settlement rows are treated as evidence to compare against replayed state,
+  not as unquestioned truth that overwrites it. Settlement files are
+  operationally important but not always clean or complete, so compare-and-
+  escalate into manual-review cases leaves room for explicit review instead of
+  silently letting either side win. Alternatives considered: settlement wins
+  always, realtime wins always.
+
+* Settlement totals are bucketed per canonical currency and compared one slice
+  at a time, with any off-currency rows opening their own review cases. A
+  single settlement export can contain rows in several currencies for one
+  payment, and silently summing their amounts would invent numbers that cannot
+  match realtime totals; keeping the comparison inside the payment's canonical
+  currency and emitting explicit cases for every off-currency settlement row
+  makes the mismatch auditable. Alternatives considered: sum all rows
+  regardless of currency, silent conversion at compare time.
 """
 
 from __future__ import annotations

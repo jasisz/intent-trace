@@ -6,6 +6,14 @@ does not keep opening the same human task forever.
 Currency anomalies (foreign-currency events arriving on an already-locked stream,
 or mixed-currency settlement imports) reuse the same case-key machinery so they
 stay idempotent across re-runs.
+
+Design decisions:
+
+* Suspicious payment histories open an explicit manual-review case instead of
+  being silently repaired or reduced to a log warning. Backoffice systems
+  should not silently fix suspicious payment histories, and opening explicit
+  manual-review cases keeps the risk visible and auditable. Alternatives
+  considered: silent repair, log-only warnings.
 """
 
 from __future__ import annotations

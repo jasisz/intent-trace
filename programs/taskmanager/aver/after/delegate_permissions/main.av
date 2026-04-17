@@ -33,8 +33,16 @@ fn bobAddsCarol(bob: User, delegated: Result<Project, String>) -> Result<Project
         Result.Err(e) -> Result.Err(e)
         Result.Ok(p) -> Projects.addMember(bob, p, "u3")
 
+verify bobAddsCarol
+    bobAddsCarol(User(id = "u2", name = "Bob", role = Role.Member), Result.Err("boom")) => Result.Err("boom")
+    bobAddsCarol(User(id = "u2", name = "Bob", role = Role.Member), Result.Ok(Project(id = "p1", name = "Launch", ownerId = "u1", memberIds = ["u2", "u1"], delegateIds = ["u2"]))) => Result.Ok(Project(id = "p1", name = "Launch", ownerId = "u1", memberIds = ["u3", "u2", "u1"], delegateIds = ["u2"]))
+
 fn revokeFromResult(owner: User, delegated: Result<Project, String>, delegateId: String) -> Result<Project, String>
     ? "Threads the delegated-project Result into a revokeDelegation call by the owner."
     match delegated
         Result.Err(e) -> Result.Err(e)
         Result.Ok(p) -> Projects.revokeDelegation(owner, p, delegateId)
+
+verify revokeFromResult
+    revokeFromResult(User(id = "u1", name = "Alice", role = Role.Admin), Result.Err("boom"), "u2") => Result.Err("boom")
+    revokeFromResult(User(id = "u1", name = "Alice", role = Role.Admin), Result.Ok(Project(id = "p1", name = "Launch", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"])), "u2") => Result.Ok(Project(id = "p1", name = "Launch", ownerId = "u1", memberIds = ["u1"], delegateIds = []))

@@ -80,16 +80,6 @@ def main() -> None:
             rho = pairwise_spearman(m)
             print(f'{reader:<10} {axis_label:<24} {n_items:>8d} {fmt(a_ord):>8} {fmt(a_int):>8} {fmt(rho):>10}')
 
-    print("\n=== Inter-judge agreement (quality axis, 3-Claude panel) ===\n")
-    print(f'{"reader":<10} {"axis":<24} {"n_items":>8} {"α_ord":>8} {"α_int":>8} {"ρ̄ pairs":>10}')
-    for reader, path in READERS.items():
-        m = build_matrix(path, "judgment_quality", JUDGES_Q, ("__quality__",))
-        n_items = m.shape[1]
-        a_ord = krippendorff.alpha(reliability_data=m, level_of_measurement="ordinal")
-        a_int = krippendorff.alpha(reliability_data=m, level_of_measurement="interval")
-        rho = pairwise_spearman(m)
-        print(f'{reader:<10} {"Q-axis (change quality)":<24} {n_items:>8d} {fmt(a_ord):>8} {fmt(a_int):>8} {fmt(rho):>10}')
-
     # Pooled across all 3 readers — gives the headline number
     print("\n=== Pooled across readers (P and D combined per axis) ===\n")
     print(f'{"axis":<24} {"n_items":>8} {"α_ord":>8} {"α_int":>8}')

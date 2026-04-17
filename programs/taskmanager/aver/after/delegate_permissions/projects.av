@@ -31,6 +31,10 @@ fn addMemberChecked(p: Project, memberId: String) -> Project
         true -> p
         false -> Project.update(p, memberIds = List.prepend(memberId, p.memberIds))
 
+verify addMemberChecked
+    addMemberChecked(sampleProject("p1", "u1"), "u1") => sampleProject("p1", "u1")
+    addMemberChecked(sampleProject("p1", "u1"), "u2") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"], delegateIds = [])
+
 fn addMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
     ? "Adds a user to the project. Only users who may modify the project (owner,"
       "Admin, or an active delegate) are permitted."
@@ -38,11 +42,22 @@ fn addMember(actor: User, p: Project, memberId: String) -> Result<Project, Strin
         false -> Result.Err("Only the owner, an Admin, or a delegate can modify project {p.id}")
         true -> Result.Ok(addMemberChecked(p, memberId))
 
+verify addMember
+    addMember(User(id = "u1", name = "Alice", role = Role.Admin), sampleProject("p1", "u1"), "u2") => Result.Ok(addMemberChecked(sampleProject("p1", "u1"), "u2"))
+    addMember(User(id = "u9", name = "Outsider", role = Role.Member), sampleProject("p1", "u1"), "u2") => Result.Err("Only the owner, an Admin, or a delegate can modify project p1")
+    addMember(User(id = "u2", name = "Delegate", role = Role.Member), Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]), "u3") => Result.Ok(Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u3", "u1"], delegateIds = ["u2"]))
+
 fn removeFromList(ids: List<String>, target: String) -> List<String>
     ? "Returns the list with all occurrences of target removed."
     match ids
         [] -> []
         [head, ..tail] -> removeFromListRec(head, tail, target)
+
+verify removeFromList
+    removeFromList([], "x") => []
+    removeFromList(["a", "b", "c"], "b") => ["a", "c"]
+    removeFromList(["a", "a", "b"], "a") => ["b"]
+    removeFromList(["a", "b"], "z") => ["a", "b"]
 
 fn removeFromListRec(head: String, tail: List<String>, target: String) -> List<String>
     ? "Single-step helper for removeFromList."
@@ -50,11 +65,19 @@ fn removeFromListRec(head: String, tail: List<String>, target: String) -> List<S
         true -> removeFromList(tail, target)
         false -> List.prepend(head, removeFromList(tail, target))
 
+verify removeFromListRec
+    removeFromListRec("a", ["b"], "a") => ["b"]
+    removeFromListRec("a", ["b"], "b") => ["a"]
+
 fn removeMemberChecked(p: Project, memberId: String) -> Result<Project, String>
     ? "Removes memberId unless they are the owner (owner cannot be removed)."
     match memberId == p.ownerId
         true -> Result.Err("Cannot remove the project owner")
         false -> Result.Ok(Project.update(p, memberIds = removeFromList(p.memberIds, memberId)))
+
+verify removeMemberChecked
+    removeMemberChecked(sampleProject("p1", "u1"), "u1") => Result.Err("Cannot remove the project owner")
+    removeMemberChecked(Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"], delegateIds = []), "u2") => Result.Ok(Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], delegateIds = []))
 
 fn removeMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
     ? "Removes a user from the project. Only users who may modify the project (owner,"
@@ -62,6 +85,11 @@ fn removeMember(actor: User, p: Project, memberId: String) -> Result<Project, St
     match Validation.canModifyProject(actor, p)
         false -> Result.Err("Only the owner, an Admin, or a delegate can modify project {p.id}")
         true -> removeMemberChecked(p, memberId)
+
+verify removeMember
+    removeMember(User(id = "u9", name = "Outsider", role = Role.Member), sampleProject("p1", "u1"), "u2") => Result.Err("Only the owner, an Admin, or a delegate can modify project p1")
+    removeMember(User(id = "u1", name = "Alice", role = Role.Admin), sampleProject("p1", "u1"), "u1") => Result.Err("Cannot remove the project owner")
+    removeMember(User(id = "u1", name = "Alice", role = Role.Admin), Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"], delegateIds = []), "u2") => Result.Ok(Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], delegateIds = []))
 
 fn alreadyDelegated(p: Project, userId: String) -> Bool
     ? "True if userId already holds a delegation on this project."
@@ -72,6 +100,10 @@ fn grantDelegationChecked(p: Project, delegateId: String) -> Project
     match alreadyDelegated(p, delegateId)
         true -> p
         false -> Project.update(p, delegateIds = List.prepend(delegateId, p.delegateIds))
+
+verify grantDelegationChecked
+    grantDelegationChecked(sampleProject("p1", "u1"), "u2") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"])
+    grantDelegationChecked(Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]), "u2") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"])
 
 fn grantDelegation(actor: User, p: Project, delegateId: String) -> Result<Project, String>
     ? "Grants delegateId owner-level modification rights on this project. Only the"
@@ -101,3 +133,11 @@ verify revokeDelegation
     revokeDelegation(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]), "u2") => Result.Ok(Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []))
     revokeDelegation(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []), "u2") => Result.Ok(Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []))
     revokeDelegation(User(id = "u2", name = "D", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]), "u2") => Result.Err("Only the project owner can revoke a delegation on project p1")
+
+fn sampleProject(projectId: String, ownerId: String) -> Project
+    ? "Test-only helper: builds a fresh project via createProject so verify blocks"
+      "can exercise membership and delegation operations without re-stating constructors."
+    createProject(projectId, "Demo", User(id = ownerId, name = "Owner", role = Role.Admin))
+
+verify sampleProject
+    sampleProject("p1", "u1") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], delegateIds = [])

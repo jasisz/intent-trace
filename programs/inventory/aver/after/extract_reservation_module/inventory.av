@@ -78,9 +78,15 @@ fn registerSku(inv: Inventory, s: Sku) -> Inventory
     ? "Adds or replaces an SKU definition on the core inventory."
     Inventory.update(inv, skus = Map.set(inv.skus, s.id, s))
 
+verify registerSku
+    knownSku(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)), "S1") => true
+
 fn registerWarehouse(inv: Inventory, w: Warehouse) -> Inventory
     ? "Adds or replaces a warehouse definition on the core inventory."
     Inventory.update(inv, warehouses = Map.set(inv.warehouses, w.id, w))
+
+verify registerWarehouse
+    knownWarehouse(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")), "W1") => true
 
 fn getCountFromMap(perSku: Map<String, Int>, skuId: String) -> Int
     ? "Looks up a per-sku integer count, defaulting to 0 when not present."
@@ -146,6 +152,7 @@ fn knownWarehouse(inv: Inventory, warehouseId: String) -> Bool
 
 verify knownWarehouse
     knownWarehouse(emptyInventory(), "W1") => false
+    knownWarehouse(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")), "W1") => true
 
 fn knownSku(inv: Inventory, skuId: String) -> Bool
     ? "Returns true if the sku has been registered on the core inventory."
@@ -155,6 +162,7 @@ fn knownSku(inv: Inventory, skuId: String) -> Bool
 
 verify knownSku
     knownSku(emptyInventory(), "S1") => false
+    knownSku(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)), "S1") => true
 
 fn applyReceive(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: adds qty to onHand at (warehouse, sku). Assumes inputs are valid."
@@ -174,6 +182,7 @@ fn receiveShipmentChecked(inv: Inventory, warehouseId: String, skuId: String, qt
 
 verify receiveShipmentChecked
     receiveShipmentChecked(emptyInventory(), "W1", "S1", 1) => Result.Err("Unknown warehouse: W1")
+    receiveShipmentChecked(sampleInventory(), "W1", "S1", 5) => Result.Ok(applyReceive(sampleInventory(), "W1", "S1", 5))
 
 fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Adds qty to onHand. Fails on unknown warehouse/sku or non-positive qty."
@@ -185,6 +194,7 @@ fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int)
 verify receiveShipment
     receiveShipment(emptyInventory(), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
     receiveShipment(emptyInventory(), "W1", "S1", 0) => Result.Err("Shipment qty must be positive")
+    receiveShipment(sampleInventory(), "W1", "S1", 5) => Result.Ok(applyReceive(sampleInventory(), "W1", "S1", 5))
 
 fn applyRebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: moves qty of stock from 'fromId' to 'toId'. Assumes source has qty available."
@@ -205,6 +215,7 @@ fn rebalanceIfAvailable(inv: Inventory, fromId: String, toId: String, skuId: Str
 
 verify rebalanceIfAvailable
     rebalanceIfAvailable(emptyInventory(), "W1", "W2", "S1", 3) => Result.Err("Insufficient stock at W1: need 3, have 0")
+    rebalanceIfAvailable(sampleTwoWarehouses(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 3))
 
 fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Rebalances after warehouse and sku validation."
@@ -218,6 +229,8 @@ fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String,
 
 verify rebalanceChecked
     rebalanceChecked(emptyInventory(), "W1", "W2", "S1", 1) => Result.Err("Unknown warehouse: W1")
+    rebalanceChecked(sampleTwoWarehouses(), "W1", "W2", "S9", 1) => Result.Err("Unknown sku: S9")
+    rebalanceChecked(sampleTwoWarehouses(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 3))
 
 fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Transfers qty of stock from 'fromId' warehouse to 'toId' warehouse. Pure core operation — no reservations."
@@ -227,6 +240,7 @@ fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: I
 
 verify rebalance
     rebalance(emptyInventory(), "W1", "W2", "S1", 0) => Result.Err("Rebalance qty must be positive")
+    rebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 3))
 
 fn sumOnHandAcc(inv: Inventory, skuId: String, warehouseIds: List<String>, acc: Int) -> Int
     ? "Tail-recursive accumulator helper used by sumOnHand."
@@ -236,6 +250,7 @@ fn sumOnHandAcc(inv: Inventory, skuId: String, warehouseIds: List<String>, acc: 
 
 verify sumOnHandAcc
     sumOnHandAcc(emptyInventory(), "S1", [], 0) => 0
+    sumOnHandAcc(sampleTwoWarehouses(), "S1", ["W1", "W2"], 0) => 15
 
 fn sumOnHand(inv: Inventory, skuId: String, warehouseIds: List<String>) -> Int
     ? "Folds onHand across warehouse ids. Helper for totalOnHand."
@@ -259,6 +274,7 @@ fn reorderPointForSku(inv: Inventory, skuId: String) -> Option<Int>
 
 verify reorderPointForSku
     reorderPointForSku(emptyInventory(), "S1") => Option.None
+    reorderPointForSku(sampleInventory(), "S1") => Option.Some(5)
 
 fn needsReorder(res: Reservations, warehouseId: String, skuId: String) -> Bool
     ? "True when available stock (onHand minus reserved) at this warehouse falls at or below the sku's reorder point."
@@ -268,6 +284,7 @@ fn needsReorder(res: Reservations, warehouseId: String, skuId: String) -> Bool
 
 verify needsReorder
     needsReorder(emptyReservations(emptyInventory()), "W1", "S1") => false
+    needsReorder(applyReserve(sampleReservations(), "W1", "S1", 6), "W1", "S1") => true
 
 fn withInventory(res: Reservations, inv: Inventory) -> Reservations
     ? "Replaces the core inventory inside a reservations record, keeping the reserved ledger intact."
@@ -293,6 +310,7 @@ fn reserveIfAvailable(res: Reservations, warehouseId: String, skuId: String, qty
 
 verify reserveIfAvailable
     reserveIfAvailable(emptyReservations(emptyInventory()), "W1", "S1", 1) => Result.Err("Insufficient available stock: need 1, have 0")
+    reserveIfAvailable(sampleReservations(), "W1", "S1", 3) => Result.Ok(applyReserve(sampleReservations(), "W1", "S1", 3))
 
 fn reserveStockChecked(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
     ? "Reserves after warehouse+sku validation. Delegates to reserveIfAvailable."
@@ -304,6 +322,8 @@ fn reserveStockChecked(res: Reservations, warehouseId: String, skuId: String, qt
 
 verify reserveStockChecked
     reserveStockChecked(emptyReservations(emptyInventory()), "W1", "S1", 1) => Result.Err("Unknown warehouse: W1")
+    reserveStockChecked(sampleReservations(), "W1", "S9", 1) => Result.Err("Unknown sku: S9")
+    reserveStockChecked(sampleReservations(), "W1", "S1", 3) => Result.Ok(applyReserve(sampleReservations(), "W1", "S1", 3))
 
 fn reserveStock(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
     ? "Reserves qty for an order. Fails if qty would exceed available (onHand - reserved)."
@@ -314,6 +334,7 @@ fn reserveStock(res: Reservations, warehouseId: String, skuId: String, qty: Int)
 verify reserveStock
     reserveStock(emptyReservations(emptyInventory()), "W1", "S1", 0) => Result.Err("Reserve qty must be positive")
     reserveStock(emptyReservations(emptyInventory()), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
+    reserveStock(sampleReservations(), "W1", "S1", 3) => Result.Ok(applyReserve(sampleReservations(), "W1", "S1", 3))
 
 fn applyRelease(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Reservations
     ? "Unchecked: subtracts qty from the reserved ledger. Assumes qty <= current reserved."
@@ -332,6 +353,7 @@ fn releaseIfReserved(res: Reservations, warehouseId: String, skuId: String, qty:
 
 verify releaseIfReserved
     releaseIfReserved(emptyReservations(emptyInventory()), "W1", "S1", 1) => Result.Err("Cannot release more than reserved: requested 1, reserved 0")
+    releaseIfReserved(applyReserve(sampleReservations(), "W1", "S1", 3), "W1", "S1", 2) => Result.Ok(applyRelease(applyReserve(sampleReservations(), "W1", "S1", 3), "W1", "S1", 2))
 
 fn releaseReservation(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
     ? "Cancels a previously made reservation. Fails if qty exceeds current reserved."
@@ -341,6 +363,7 @@ fn releaseReservation(res: Reservations, warehouseId: String, skuId: String, qty
 
 verify releaseReservation
     releaseReservation(emptyReservations(emptyInventory()), "W1", "S1", 0) => Result.Err("Release qty must be positive")
+    releaseReservation(applyReserve(sampleReservations(), "W1", "S1", 3), "W1", "S1", 2) => Result.Ok(applyRelease(applyReserve(sampleReservations(), "W1", "S1", 3), "W1", "S1", 2))
 
 fn applyFulfill(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Reservations
     ? "Unchecked: subtracts qty from both the core onHand and the reserved ledger."
@@ -362,6 +385,7 @@ fn fulfillIfReserved(res: Reservations, warehouseId: String, skuId: String, qty:
 
 verify fulfillIfReserved
     fulfillIfReserved(emptyReservations(emptyInventory()), "W1", "S1", 1) => Result.Err("Cannot fulfill more than reserved: requested 1, reserved 0")
+    fulfillIfReserved(applyReserve(sampleReservations(), "W1", "S1", 3), "W1", "S1", 2) => Result.Ok(applyFulfill(applyReserve(sampleReservations(), "W1", "S1", 3), "W1", "S1", 2))
 
 fn fulfillReservation(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
     ? "Ships qty out: removes it from both reserved and onHand. Fails if qty exceeds reserved."
@@ -371,6 +395,34 @@ fn fulfillReservation(res: Reservations, warehouseId: String, skuId: String, qty
 
 verify fulfillReservation
     fulfillReservation(emptyReservations(emptyInventory()), "W1", "S1", 0) => Result.Err("Fulfill qty must be positive")
+    fulfillReservation(applyReserve(sampleReservations(), "W1", "S1", 3), "W1", "S1", 2) => Result.Ok(applyFulfill(applyReserve(sampleReservations(), "W1", "S1", 3), "W1", "S1", 2))
+
+fn sampleInventory() -> Inventory
+    ? "Test-only helper: core inventory with W1 (NYC), S1 (Widget, reorderPoint = 5), and 10 onHand of S1 at W1."
+    base = registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC"))
+    withSku = registerSku(base, Sku(id = "S1", name = "Widget", reorderPoint = 5))
+    applyReceive(withSku, "W1", "S1", 10)
+
+verify sampleInventory
+    onHandStock(sampleInventory(), "W1", "S1") => 10
+    knownWarehouse(sampleInventory(), "W1") => true
+    knownSku(sampleInventory(), "S1") => true
+
+fn sampleTwoWarehouses() -> Inventory
+    ? "Test-only helper: sampleInventory with a second warehouse W2 (LA) holding 5 onHand of S1."
+    withW2 = registerWarehouse(sampleInventory(), Warehouse(id = "W2", location = "LA"))
+    applyReceive(withW2, "W2", "S1", 5)
+
+verify sampleTwoWarehouses
+    onHandStock(sampleTwoWarehouses(), "W1", "S1") => 10
+    onHandStock(sampleTwoWarehouses(), "W2", "S1") => 5
+
+fn sampleReservations() -> Reservations
+    ? "Test-only helper: reservations layer wrapping sampleInventory."
+    emptyReservations(sampleInventory())
+
+verify sampleReservations
+    availableStock(sampleReservations(), "W1", "S1") => 10
 
 fn main() -> Unit
     ! [Console.print]

@@ -29,11 +29,19 @@ fn addMemberChecked(p: Project, memberId: String) -> Project
         true -> p
         false -> Project.update(p, memberIds = List.prepend(memberId, p.memberIds))
 
+verify addMemberChecked
+    addMemberChecked(sampleProject("p1", "u1"), "u1") => sampleProject("p1", "u1")
+    addMemberChecked(sampleProject("p1", "u1"), "u2") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"])
+
 fn addMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
     ? "Adds a user to the project. Only owner or Admin may do this."
     match Validation.canModifyProject(actor, p)
         false -> Result.Err("Only the owner or an Admin can modify project {p.id}")
         true -> Result.Ok(addMemberChecked(p, memberId))
+
+verify addMember
+    addMember(User(id = "u1", name = "Alice", role = Role.Admin), sampleProject("p1", "u1"), "u2") => Result.Ok(addMemberChecked(sampleProject("p1", "u1"), "u2"))
+    addMember(User(id = "u9", name = "Outsider", role = Role.Member), sampleProject("p1", "u1"), "u2") => Result.Err("Only the owner or an Admin can modify project p1")
 
 fn removeFromList(ids: List<String>, target: String) -> List<String>
     ? "Returns the list with all occurrences of target removed."
@@ -41,11 +49,21 @@ fn removeFromList(ids: List<String>, target: String) -> List<String>
         [] -> []
         [head, ..tail] -> removeFromListRec(head, tail, target)
 
+verify removeFromList
+    removeFromList([], "x") => []
+    removeFromList(["a", "b", "c"], "b") => ["a", "c"]
+    removeFromList(["a", "a", "b"], "a") => ["b"]
+    removeFromList(["a", "b"], "z") => ["a", "b"]
+
 fn removeFromListRec(head: String, tail: List<String>, target: String) -> List<String>
     ? "Single-step helper for removeFromList."
     match head == target
         true -> removeFromList(tail, target)
         false -> List.prepend(head, removeFromList(tail, target))
+
+verify removeFromListRec
+    removeFromListRec("a", ["b"], "a") => ["b"]
+    removeFromListRec("a", ["b"], "b") => ["a"]
 
 fn removeMemberChecked(p: Project, memberId: String) -> Result<Project, String>
     ? "Removes memberId unless they are the owner (owner cannot be removed)."
@@ -53,8 +71,25 @@ fn removeMemberChecked(p: Project, memberId: String) -> Result<Project, String>
         true -> Result.Err("Cannot remove the project owner")
         false -> Result.Ok(Project.update(p, memberIds = removeFromList(p.memberIds, memberId)))
 
+verify removeMemberChecked
+    removeMemberChecked(sampleProject("p1", "u1"), "u1") => Result.Err("Cannot remove the project owner")
+    removeMemberChecked(Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"]), "u2") => Result.Ok(Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"]))
+
 fn removeMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
     ? "Removes a user from the project. Only owner or Admin may do this; owner is protected."
     match Validation.canModifyProject(actor, p)
         false -> Result.Err("Only the owner or an Admin can modify project {p.id}")
         true -> removeMemberChecked(p, memberId)
+
+verify removeMember
+    removeMember(User(id = "u9", name = "Outsider", role = Role.Member), sampleProject("p1", "u1"), "u2") => Result.Err("Only the owner or an Admin can modify project p1")
+    removeMember(User(id = "u1", name = "Alice", role = Role.Admin), sampleProject("p1", "u1"), "u1") => Result.Err("Cannot remove the project owner")
+    removeMember(User(id = "u1", name = "Alice", role = Role.Admin), Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"]), "u2") => Result.Ok(Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"]))
+
+fn sampleProject(projectId: String, ownerId: String) -> Project
+    ? "Test-only helper: builds a fresh project via createProject so verify blocks"
+      "can exercise membership operations without re-stating the constructor."
+    createProject(projectId, "Demo", User(id = ownerId, name = "Owner", role = Role.Admin))
+
+verify sampleProject
+    sampleProject("p1", "u1") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"])

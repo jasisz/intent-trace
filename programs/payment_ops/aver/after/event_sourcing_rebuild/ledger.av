@@ -4,7 +4,7 @@ module Ledger
         "Backoffice review gets easier when webhook ingestion becomes append-only events"
         "and every current state is rebuilt from those events by one pure rebuilder."
     exposes [eventName, eventAt, hasSourceId, nextSeq, eventsForPayment, rebuildPaymentState, replayPayment, replayAll]
-    depends [Domain.Types]
+    depends [Types]
 
 decision SingleRebuilderAsSourceOfTruth
     date = "2026-04-16"

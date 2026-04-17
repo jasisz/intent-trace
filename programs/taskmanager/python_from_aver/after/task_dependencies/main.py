@@ -18,6 +18,7 @@ from validation import (
 
 
 def _smoke_tests() -> None:
+    """Run a representative sequence of API calls to check the module wires together."""
     alice = User(id="u1", name="Alice", role=Role.ADMIN)
     bob = User(id="u2", name="Bob", role=Role.MEMBER)
     carol = User(id="u3", name="Carol", role=Role.VIEWER)

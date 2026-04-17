@@ -2,6 +2,14 @@
 
 Dirty payment operations need stable case keys so re-running ingest or reconciliation
 does not keep opening the same human task forever.
+
+Design decisions:
+
+* Suspicious payment histories open an explicit manual-review case instead of
+  being silently repaired or reduced to a log warning. Backoffice systems
+  should not silently fix suspicious payment histories, and opening explicit
+  manual-review cases keeps the risk visible and auditable. Alternatives
+  considered: silent repair, log-only warnings.
 """
 
 from __future__ import annotations

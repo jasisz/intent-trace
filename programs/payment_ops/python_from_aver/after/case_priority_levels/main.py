@@ -66,6 +66,7 @@ else:
 
 
 def sampleAuthorized() -> PaymentEventRecord:
+    """Authorization event fixture for the Stripe pay-1 happy path."""
     return PaymentEventRecord(
         provider="stripe",
         sourceId="evt-1",
@@ -76,6 +77,7 @@ def sampleAuthorized() -> PaymentEventRecord:
 
 
 def sampleCaptured() -> PaymentEventRecord:
+    """Capture event fixture matching `sampleAuthorized` on pay-1."""
     return PaymentEventRecord(
         provider="stripe",
         sourceId="evt-2",
@@ -86,6 +88,7 @@ def sampleCaptured() -> PaymentEventRecord:
 
 
 def sampleRefundBeforeCapture() -> PaymentEventRecord:
+    """Refund-before-capture fixture for anomaly tests on pay-2."""
     return PaymentEventRecord(
         provider="stripe",
         sourceId="evt-9",
@@ -96,6 +99,7 @@ def sampleRefundBeforeCapture() -> PaymentEventRecord:
 
 
 def sampleOtherPayment() -> PaymentEventRecord:
+    """Second-payment fixture used to exercise multi-stream replay."""
     return PaymentEventRecord(
         provider="stripe",
         sourceId="evt-7",
@@ -106,6 +110,7 @@ def sampleOtherPayment() -> PaymentEventRecord:
 
 
 def sampleState() -> PaymentState:
+    """Happy-path replay state for pay-1 with matching capture."""
     return PaymentState(
         paymentId="pay-1",
         provider="stripe",
@@ -120,6 +125,7 @@ def sampleState() -> PaymentState:
 
 
 def sampleCaptureRow() -> SettlementRow:
+    """Settlement capture fixture that matches `sampleState`."""
     return SettlementRow(
         provider="stripe",
         rowId="row-1",
@@ -132,6 +138,7 @@ def sampleCaptureRow() -> SettlementRow:
 
 
 def sampleRefundRow() -> SettlementRow:
+    """Settlement refund fixture used by reconciliation tests."""
     return SettlementRow(
         provider="stripe",
         rowId="row-2",
@@ -144,6 +151,7 @@ def sampleRefundRow() -> SettlementRow:
 
 
 def sampleCase() -> ReviewCase:
+    """Single open review-case fixture used by case lifecycle tests."""
     return ReviewCase(
         id="case-1",
         key="k",
@@ -160,6 +168,7 @@ def sampleCase() -> ReviewCase:
 
 
 def sampleEvent() -> PaymentEventRecord:
+    """Capture event fixture used by provider-summary tests."""
     return PaymentEventRecord(
         provider="stripe",
         sourceId="evt-1",
@@ -175,6 +184,7 @@ def sampleEvent() -> PaymentEventRecord:
 
 
 def _expect_error(fn, message: str) -> None:
+    """Assert that `fn()` raises `ValueError(message)` to mirror Result.Err cases."""
     try:
         fn()
     except ValueError as exc:
@@ -190,6 +200,7 @@ def _expect_error(fn, message: str) -> None:
 
 def _test_normalize() -> None:
     # normalizeWebhook
+    """Mirror every `verify` block from the Aver `Normalize` module."""
     assert normalize.normalizeWebhook(
         "stripe",
         1,
@@ -311,6 +322,7 @@ def _test_normalize() -> None:
 
 def _test_cases() -> None:
     # makeCaseDraft — amount defaults to 0 and is preserved when supplied.
+    """Mirror every `verify` block from the Aver `Cases` module."""
     assert cases.makeCaseDraft(
         "stripe", "pay-1", "refund_before_capture", "Refund arrived first", "k"
     ) == CaseDraft("k", "stripe", "pay-1", "refund_before_capture", "Refund arrived first", 0)
@@ -593,6 +605,7 @@ def _test_cases() -> None:
 
 def _test_ledger() -> None:
     # eventName / eventAt / eventCurrency / eventAmount
+    """Mirror every `verify` block from the Aver `Ledger` module."""
     assert ledger.eventName(Authorized(100, "USD", "2026-03-10T09:00:00Z")) == "Authorized"
     assert ledger.eventName(Captured(100, "USD", "2026-03-10T10:00:00Z")) == "Captured"
     assert ledger.eventName(Refunded(50, "USD", "2026-03-10T10:00:00Z")) == "Refunded"
@@ -767,6 +780,7 @@ def _test_ledger() -> None:
 
 def _test_reconcile() -> None:
     # reconcileProvider no mismatch
+    """Mirror every `verify` block from the Aver `Reconcile` module."""
     assert reconcile.reconcileProvider("stripe", [sampleState()], [sampleCaptureRow()]) == []
 
     # reconcileProvider capture mismatch — draft carries the larger side as amount.
@@ -913,6 +927,7 @@ def _test_reconcile() -> None:
 
 def _test_views() -> None:
     # statusText
+    """Mirror every `verify` block from the Aver `Views` module."""
     assert views.statusText(sampleState()) == "captured"
     assert views.statusText(
         PaymentState(
@@ -1043,6 +1058,7 @@ def _smoke_tests() -> None:
 
 
 def main() -> int:
+    """Run the smoke tests and print a pass banner for CI logs."""
     _smoke_tests()
     print("payment_ops python port (case_priority_levels): all smoke tests passed")
     # Silence linters about unused imports while keeping the public surface explicit.

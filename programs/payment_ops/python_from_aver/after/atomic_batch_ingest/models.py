@@ -181,6 +181,7 @@ class BatchIngestError(ValueError):
     """
 
     def __init__(self, index: int, item: BatchIngestItem, cause: BaseException) -> None:
+        """Capture the failing slot so operators can see exactly which row broke."""
         self.index = index
         self.item = item
         self.cause = cause

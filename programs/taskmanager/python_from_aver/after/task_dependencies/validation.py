@@ -2,7 +2,28 @@
 
 Every cross-cutting check that operations consult lives here, so that
 business rules are kept out of the operation bodies and can be reviewed
-on their own.
+on their own. Transition rules also know about task dependencies:
+moving a task to Done requires every dependency task to be Done.
+
+Design decisions:
+
+* Permission checks live here as named pure functions rather than as
+  inline snippets in the operation bodies or as methods on the record
+  classes. Keeping each rule as a top-level function makes it reviewable
+  in one place; inlining the same logic into every operation would spread
+  the same policy across several files and make it easy for drift to
+  sneak in. Alternatives considered: inline checks at each call site,
+  class methods on the record types.
+
+* Dependency resolution is performed at the call site, not inside
+  validation. Tasks module knows how to resolve dependency ids to Task
+  records (or how to hand the caller's ``tasks_by_id`` map through);
+  validation only decides whether the tasks it receives are Done. Keeping
+  validation pure and side-effect free means it never has to reach for a
+  store or fetch extra records, which keeps the predicates easy to test
+  and easy to reason about. Alternatives considered: fetch dependency
+  tasks inside validation, store dependency completion status on the
+  task itself.
 """
 from __future__ import annotations
 
@@ -12,14 +33,17 @@ from models import Project, Role, Status, Task, User
 
 
 def is_admin(u: User) -> bool:
+    """True if the user has Admin role."""
     return u.role is Role.ADMIN
 
 
 def is_member(p: Project, user_id: str) -> bool:
+    """True if user_id is listed in the project's member_ids."""
     return user_id in p.member_ids
 
 
 def is_owner_or_admin(u: User, p: Project) -> bool:
+    """True if the user owns the project or has Admin role on the system."""
     return u.id == p.owner_id or is_admin(u)
 
 

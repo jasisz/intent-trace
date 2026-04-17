@@ -4,6 +4,16 @@ Admin/Member/Viewer roles govern what operations are permitted.
 Tasks move through Todo → InProgress → Done, with Blocked as an off-path state.
 Tasks also carry a Priority (Low/Medium/High/Critical); Critical tasks have
 stricter assignment rules (see validation).
+
+Design decisions:
+
+* Priority lives on the Task record itself as a closed enum of four levels,
+  not on a parallel record and not as a free-form integer. Priority is a
+  property of the work item — it influences assignment rules and any
+  display of the task — so it belongs on Task, and a closed sum of four
+  levels makes pattern-matching exhaustive and assignment-policy code
+  auditable. Alternatives considered: integer priority field, separate
+  Priority record per task.
 """
 from __future__ import annotations
 

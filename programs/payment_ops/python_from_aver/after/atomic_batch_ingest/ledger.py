@@ -7,6 +7,25 @@ Ingestion is expressed as an atomic batch: a burst of raw webhooks is either
 fully normalized and appended, or the caller's event log is left untouched.
 ``ingestWebhook`` is a thin wrapper that reuses the batch path with a single
 element so there is only one code path to reason about.
+
+Design decisions:
+
+* Payment state is never mutated in place; every current state is derived by
+  replaying the append-only canonical event log. Dirty payment integrations are
+  easiest to audit when the stored history stays immutable, and replaying
+  canonical events keeps dedupe and reconciliation readable instead of hiding
+  rules in writes. Alternatives considered: mutable payment rows, ad-hoc status
+  overrides.
+
+* Webhook ingestion is all-or-nothing at the batch level: the entire burst is
+  normalized and dedupe-checked up front, and either every row is appended or
+  the caller keeps the pre-batch event list unchanged. Providers deliver
+  webhooks in bursts, and committing one event at a time used to leave
+  operators with a half-updated payment whenever a late row in the burst
+  failed normalization or duplicated a sourceId. Single-row ingestion is
+  expressed as a one-element batch so there is exactly one ingestion code
+  path to reason about. Alternatives considered: per-event commit, two
+  parallel ingestion code paths.
 """
 
 from __future__ import annotations

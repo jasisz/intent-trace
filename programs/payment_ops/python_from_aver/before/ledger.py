@@ -2,6 +2,15 @@
 
 Backoffice review gets easier when webhook ingestion becomes append-only events
 and every current state is rebuilt from those events in plain code.
+
+Design decisions:
+
+* Payment state is never mutated in place; every current state is derived by
+  replaying the append-only canonical event log. Dirty payment integrations are
+  easiest to audit when the stored history stays immutable, and replaying
+  canonical events keeps dedupe and reconciliation readable instead of hiding
+  rules in writes. Alternatives considered: mutable payment rows, ad-hoc status
+  overrides.
 """
 
 from __future__ import annotations

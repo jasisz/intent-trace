@@ -47,17 +47,34 @@ fn emptyInventory() -> Inventory
     ? "Builds an empty inventory with no warehouses, skus, or stock."
     Inventory(skus = Map.fromList([]), warehouses = Map.fromList([]), levels = Map.fromList([]))
 
+verify emptyInventory
+    Map.len(emptyInventory().skus) => 0
+    Map.len(emptyInventory().warehouses) => 0
+    Map.len(emptyInventory().levels) => 0
+
 fn registerSku(inv: Inventory, s: Sku) -> Inventory
     ? "Adds or replaces an SKU definition."
     Inventory.update(inv, skus = Map.set(inv.skus, s.id, s))
+
+verify registerSku
+    Map.len(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)).skus) => 1
+    knownSku(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)), "S1") => true
 
 fn registerWarehouse(inv: Inventory, w: Warehouse) -> Inventory
     ? "Adds or replaces a warehouse definition."
     Inventory.update(inv, warehouses = Map.set(inv.warehouses, w.id, w))
 
+verify registerWarehouse
+    Map.len(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")).warehouses) => 1
+    knownWarehouse(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")), "W1") => true
+
 fn zeroLevel() -> StockLevel
     ? "The stock level used for warehouse/sku pairs with no recorded stock yet."
     StockLevel(onHand = 0, reserved = 0)
+
+verify zeroLevel
+    zeroLevel().onHand => 0
+    zeroLevel().reserved => 0
 
 fn getLevelFromMap(perSku: Map<String, StockLevel>, skuId: String) -> StockLevel
     ? "Looks up a stock level in the per-sku submap, defaulting to zero."
@@ -65,11 +82,22 @@ fn getLevelFromMap(perSku: Map<String, StockLevel>, skuId: String) -> StockLevel
         Option.None -> zeroLevel()
         Option.Some(lvl) -> lvl
 
+verify getLevelFromMap
+    getLevelFromMap(Map.fromList([]), "S1") => zeroLevel()
+    getLevelFromMap(Map.fromList([("S1", StockLevel(onHand = 5, reserved = 1))]), "S1") => StockLevel(onHand = 5, reserved = 1)
+    getLevelFromMap(Map.fromList([("S1", StockLevel(onHand = 5, reserved = 1))]), "S2") => zeroLevel()
+
 fn getLevel(inv: Inventory, warehouseId: String, skuId: String) -> StockLevel
     ? "Returns the stock level for (warehouse, sku), or zero if none recorded yet."
     match Map.get(inv.levels, warehouseId)
         Option.None -> zeroLevel()
         Option.Some(perSku) -> getLevelFromMap(perSku, skuId)
+
+verify getLevel
+    getLevel(emptyInventory(), "W1", "S1") => zeroLevel()
+    getLevel(sampleInventory(), "W1", "S1") => StockLevel(onHand = 10, reserved = 0)
+    getLevel(sampleInventory(), "W1", "S2") => zeroLevel()
+    getLevel(sampleInventory(), "W9", "S1") => zeroLevel()
 
 fn perSkuMap(inv: Inventory, warehouseId: String) -> Map<String, StockLevel>
     ? "Returns the existing per-sku submap for a warehouse, or a new empty map."
@@ -77,10 +105,18 @@ fn perSkuMap(inv: Inventory, warehouseId: String) -> Map<String, StockLevel>
         Option.None -> Map.fromList([])
         Option.Some(m) -> m
 
+verify perSkuMap
+    perSkuMap(emptyInventory(), "W1") => Map.fromList([])
+    perSkuMap(sampleInventory(), "W1") => Map.fromList([("S1", StockLevel(onHand = 10, reserved = 0))])
+
 fn setLevel(inv: Inventory, warehouseId: String, skuId: String, lvl: StockLevel) -> Inventory
     ? "Stores a stock level for (warehouse, sku). Overwrites any previous value."
     updated = Map.set(perSkuMap(inv, warehouseId), skuId, lvl)
     Inventory.update(inv, levels = Map.set(inv.levels, warehouseId, updated))
+
+verify setLevel
+    getLevel(setLevel(emptyInventory(), "W1", "S1", StockLevel(onHand = 7, reserved = 2)), "W1", "S1") => StockLevel(onHand = 7, reserved = 2)
+    getLevel(setLevel(sampleInventory(), "W1", "S1", StockLevel(onHand = 1, reserved = 0)), "W1", "S1") => StockLevel(onHand = 1, reserved = 0)
 
 fn availableStock(inv: Inventory, warehouseId: String, skuId: String) -> Int
     ? "Returns units currently available for new reservations: onHand minus reserved."
@@ -89,6 +125,8 @@ fn availableStock(inv: Inventory, warehouseId: String, skuId: String) -> Int
 
 verify availableStock
     availableStock(emptyInventory(), "W1", "S1") => 0
+    availableStock(sampleInventory(), "W1", "S1") => 10
+    availableStock(sampleInventoryWithReserved(), "W1", "S1") => 6
 
 fn knownWarehouse(inv: Inventory, warehouseId: String) -> Bool
     ? "Returns true if the warehouse has been registered."
@@ -96,16 +134,30 @@ fn knownWarehouse(inv: Inventory, warehouseId: String) -> Bool
         Option.None -> false
         Option.Some(_) -> true
 
+verify knownWarehouse
+    knownWarehouse(emptyInventory(), "W1") => false
+    knownWarehouse(sampleInventory(), "W1") => true
+    knownWarehouse(sampleInventory(), "W9") => false
+
 fn knownSku(inv: Inventory, skuId: String) -> Bool
     ? "Returns true if the sku has been registered."
     match Map.get(inv.skus, skuId)
         Option.None -> false
         Option.Some(_) -> true
 
+verify knownSku
+    knownSku(emptyInventory(), "S1") => false
+    knownSku(sampleInventory(), "S1") => true
+    knownSku(sampleInventory(), "S9") => false
+
 fn applyReceive(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: adds qty to onHand at (warehouse, sku). Assumes inputs are valid."
     lvl = getLevel(inv, warehouseId, skuId)
     setLevel(inv, warehouseId, skuId, StockLevel(onHand = lvl.onHand + qty, reserved = lvl.reserved))
+
+verify applyReceive
+    getLevel(applyReceive(sampleInventory(), "W1", "S1", 5), "W1", "S1") => StockLevel(onHand = 15, reserved = 0)
+    getLevel(applyReceive(sampleInventoryWithReserved(), "W1", "S1", 3), "W1", "S1") => StockLevel(onHand = 13, reserved = 4)
 
 fn receiveShipmentChecked(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Receives a shipment assuming qty is positive. Checks warehouse and sku are known."
@@ -114,6 +166,11 @@ fn receiveShipmentChecked(inv: Inventory, warehouseId: String, skuId: String, qt
         true -> match knownSku(inv, skuId)
             false -> Result.Err("Unknown sku: {skuId}")
             true -> Result.Ok(applyReceive(inv, warehouseId, skuId, qty))
+
+verify receiveShipmentChecked
+    receiveShipmentChecked(emptyInventory(), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
+    receiveShipmentChecked(sampleInventory(), "W1", "S9", 5) => Result.Err("Unknown sku: S9")
+    receiveShipmentChecked(sampleInventory(), "W1", "S1", 5) => Result.Ok(applyReceive(sampleInventory(), "W1", "S1", 5))
 
 fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Adds qty to onHand. Fails on unknown warehouse/sku or non-positive qty."
@@ -124,11 +181,16 @@ fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int)
 verify receiveShipment
     receiveShipment(emptyInventory(), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
     receiveShipment(emptyInventory(), "W1", "S1", 0) => Result.Err("Shipment qty must be positive")
+    receiveShipment(sampleInventory(), "W1", "S1", 5) => Result.Ok(applyReceive(sampleInventory(), "W1", "S1", 5))
 
 fn applyReserve(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: adds qty to reserved at (warehouse, sku). Assumes inputs are valid and sufficient."
     lvl = getLevel(inv, warehouseId, skuId)
     setLevel(inv, warehouseId, skuId, StockLevel(onHand = lvl.onHand, reserved = lvl.reserved + qty))
+
+verify applyReserve
+    getLevel(applyReserve(sampleInventory(), "W1", "S1", 3), "W1", "S1") => StockLevel(onHand = 10, reserved = 3)
+    getLevel(applyReserve(sampleInventoryWithReserved(), "W1", "S1", 2), "W1", "S1") => StockLevel(onHand = 10, reserved = 6)
 
 fn reserveIfAvailable(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Checks that qty is available before reserving."
@@ -138,6 +200,11 @@ fn reserveIfAvailable(inv: Inventory, warehouseId: String, skuId: String, qty: I
         true -> Result.Err("Insufficient available stock: need {qty}, have {avail}")
         false -> Result.Ok(applyReserve(inv, warehouseId, skuId, qty))
 
+verify reserveIfAvailable
+    reserveIfAvailable(sampleInventory(), "W1", "S1", 11) => Result.Err("Insufficient available stock: need 11, have 10")
+    reserveIfAvailable(sampleInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(sampleInventory(), "W1", "S1", 3))
+    reserveIfAvailable(sampleInventoryWithReserved(), "W1", "S1", 7) => Result.Err("Insufficient available stock: need 7, have 6")
+
 fn reserveStockChecked(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Reserves after warehouse+sku validation. Delegates to reserveIfAvailable."
     match knownWarehouse(inv, warehouseId)
@@ -146,16 +213,30 @@ fn reserveStockChecked(inv: Inventory, warehouseId: String, skuId: String, qty: 
             false -> Result.Err("Unknown sku: {skuId}")
             true -> reserveIfAvailable(inv, warehouseId, skuId, qty)
 
+verify reserveStockChecked
+    reserveStockChecked(emptyInventory(), "W1", "S1", 3) => Result.Err("Unknown warehouse: W1")
+    reserveStockChecked(sampleInventory(), "W1", "S9", 3) => Result.Err("Unknown sku: S9")
+    reserveStockChecked(sampleInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(sampleInventory(), "W1", "S1", 3))
+
 fn reserveStock(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Reserves qty for an order. Fails if qty would exceed available (onHand - reserved)."
     match qty <= 0
         true -> Result.Err("Reserve qty must be positive")
         false -> reserveStockChecked(inv, warehouseId, skuId, qty)
 
+verify reserveStock
+    reserveStock(sampleInventory(), "W1", "S1", 0) => Result.Err("Reserve qty must be positive")
+    reserveStock(emptyInventory(), "W1", "S1", 3) => Result.Err("Unknown warehouse: W1")
+    reserveStock(sampleInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(sampleInventory(), "W1", "S1", 3))
+
 fn applyRelease(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: subtracts qty from reserved. Assumes qty <= current reserved."
     lvl = getLevel(inv, warehouseId, skuId)
     setLevel(inv, warehouseId, skuId, StockLevel(onHand = lvl.onHand, reserved = lvl.reserved - qty))
+
+verify applyRelease
+    getLevel(applyRelease(sampleInventoryWithReserved(), "W1", "S1", 3), "W1", "S1") => StockLevel(onHand = 10, reserved = 1)
+    getLevel(applyRelease(sampleInventoryWithReserved(), "W1", "S1", 4), "W1", "S1") => StockLevel(onHand = 10, reserved = 0)
 
 fn releaseIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Releases qty from reserved, failing if qty exceeds what is currently reserved."
@@ -164,16 +245,30 @@ fn releaseIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: In
         true -> Result.Err("Cannot release more than reserved: requested {qty}, reserved {lvl.reserved}")
         false -> Result.Ok(applyRelease(inv, warehouseId, skuId, qty))
 
+verify releaseIfReserved
+    releaseIfReserved(sampleInventory(), "W1", "S1", 1) => Result.Err("Cannot release more than reserved: requested 1, reserved 0")
+    releaseIfReserved(sampleInventoryWithReserved(), "W1", "S1", 10) => Result.Err("Cannot release more than reserved: requested 10, reserved 4")
+    releaseIfReserved(sampleInventoryWithReserved(), "W1", "S1", 3) => Result.Ok(applyRelease(sampleInventoryWithReserved(), "W1", "S1", 3))
+
 fn releaseReservation(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Cancels a previously made reservation. Fails if qty exceeds current reserved."
     match qty <= 0
         true -> Result.Err("Release qty must be positive")
         false -> releaseIfReserved(inv, warehouseId, skuId, qty)
 
+verify releaseReservation
+    releaseReservation(sampleInventoryWithReserved(), "W1", "S1", 0) => Result.Err("Release qty must be positive")
+    releaseReservation(sampleInventory(), "W1", "S1", 2) => Result.Err("Cannot release more than reserved: requested 2, reserved 0")
+    releaseReservation(sampleInventoryWithReserved(), "W1", "S1", 2) => Result.Ok(applyRelease(sampleInventoryWithReserved(), "W1", "S1", 2))
+
 fn applyFulfill(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: removes qty from both onHand and reserved. Assumes qty <= current reserved."
     lvl = getLevel(inv, warehouseId, skuId)
     setLevel(inv, warehouseId, skuId, StockLevel(onHand = lvl.onHand - qty, reserved = lvl.reserved - qty))
+
+verify applyFulfill
+    getLevel(applyFulfill(sampleInventoryWithReserved(), "W1", "S1", 3), "W1", "S1") => StockLevel(onHand = 7, reserved = 1)
+    getLevel(applyFulfill(sampleInventoryWithReserved(), "W1", "S1", 4), "W1", "S1") => StockLevel(onHand = 6, reserved = 0)
 
 fn fulfillIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Ships qty, failing if qty exceeds what is currently reserved at this (warehouse, sku)."
@@ -182,11 +277,21 @@ fn fulfillIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: In
         true -> Result.Err("Cannot fulfill more than reserved: requested {qty}, reserved {lvl.reserved}")
         false -> Result.Ok(applyFulfill(inv, warehouseId, skuId, qty))
 
+verify fulfillIfReserved
+    fulfillIfReserved(sampleInventory(), "W1", "S1", 1) => Result.Err("Cannot fulfill more than reserved: requested 1, reserved 0")
+    fulfillIfReserved(sampleInventoryWithReserved(), "W1", "S1", 5) => Result.Err("Cannot fulfill more than reserved: requested 5, reserved 4")
+    fulfillIfReserved(sampleInventoryWithReserved(), "W1", "S1", 3) => Result.Ok(applyFulfill(sampleInventoryWithReserved(), "W1", "S1", 3))
+
 fn fulfillReservation(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Ships qty out: removes it from both reserved and onHand. Fails if qty exceeds reserved."
     match qty <= 0
         true -> Result.Err("Fulfill qty must be positive")
         false -> fulfillIfReserved(inv, warehouseId, skuId, qty)
+
+verify fulfillReservation
+    fulfillReservation(sampleInventoryWithReserved(), "W1", "S1", 0) => Result.Err("Fulfill qty must be positive")
+    fulfillReservation(sampleInventory(), "W1", "S1", 1) => Result.Err("Cannot fulfill more than reserved: requested 1, reserved 0")
+    fulfillReservation(sampleInventoryWithReserved(), "W1", "S1", 2) => Result.Ok(applyFulfill(sampleInventoryWithReserved(), "W1", "S1", 2))
 
 fn applyRebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Inventory
     ? "Unchecked: moves qty of unreserved stock from 'fromId' to 'toId'. Assumes source has qty available."
@@ -195,6 +300,10 @@ fn applyRebalance(inv: Inventory, fromId: String, toId: String, skuId: String, q
     withFrom = setLevel(inv, fromId, skuId, StockLevel(onHand = fromLvl.onHand - qty, reserved = fromLvl.reserved))
     setLevel(withFrom, toId, skuId, StockLevel(onHand = toLvl.onHand + qty, reserved = toLvl.reserved))
 
+verify applyRebalance
+    getLevel(applyRebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 3), "W1", "S1") => StockLevel(onHand = 7, reserved = 0)
+    getLevel(applyRebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 3), "W2", "S1") => StockLevel(onHand = 8, reserved = 0)
+
 fn rebalanceIfAvailable(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Rebalances after checking source has enough available stock."
     fromLvl = getLevel(inv, fromId, skuId)
@@ -202,6 +311,10 @@ fn rebalanceIfAvailable(inv: Inventory, fromId: String, toId: String, skuId: Str
     match qty > avail
         true -> Result.Err("Insufficient stock at {fromId}: need {qty}, have {avail}")
         false -> Result.Ok(applyRebalance(inv, fromId, toId, skuId, qty))
+
+verify rebalanceIfAvailable
+    rebalanceIfAvailable(sampleTwoWarehouses(), "W1", "W2", "S1", 11) => Result.Err("Insufficient stock at W1: need 11, have 10")
+    rebalanceIfAvailable(sampleTwoWarehouses(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 3))
 
 fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Rebalances after warehouse and sku validation."
@@ -213,11 +326,22 @@ fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String,
                 false -> Result.Err("Unknown sku: {skuId}")
                 true -> rebalanceIfAvailable(inv, fromId, toId, skuId, qty)
 
+verify rebalanceChecked
+    rebalanceChecked(sampleInventory(), "W9", "W1", "S1", 2) => Result.Err("Unknown warehouse: W9")
+    rebalanceChecked(sampleInventory(), "W1", "W9", "S1", 2) => Result.Err("Unknown warehouse: W9")
+    rebalanceChecked(sampleTwoWarehouses(), "W1", "W2", "S9", 2) => Result.Err("Unknown sku: S9")
+    rebalanceChecked(sampleTwoWarehouses(), "W1", "W2", "S1", 2) => Result.Ok(applyRebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 2))
+
 fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
     ? "Transfers qty of unreserved stock from 'fromId' warehouse to 'toId' warehouse."
     match qty <= 0
         true -> Result.Err("Rebalance qty must be positive")
         false -> rebalanceChecked(inv, fromId, toId, skuId, qty)
+
+verify rebalance
+    rebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 0) => Result.Err("Rebalance qty must be positive")
+    rebalance(sampleInventory(), "W9", "W1", "S1", 2) => Result.Err("Unknown warehouse: W9")
+    rebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 2) => Result.Ok(applyRebalance(sampleTwoWarehouses(), "W1", "W2", "S1", 2))
 
 fn reorderPointForSku(inv: Inventory, skuId: String) -> Option<Int>
     ? "Looks up the reorder point of a registered sku."
@@ -225,11 +349,21 @@ fn reorderPointForSku(inv: Inventory, skuId: String) -> Option<Int>
         Option.None -> Option.None
         Option.Some(sku) -> Option.Some(sku.reorderPoint)
 
+verify reorderPointForSku
+    reorderPointForSku(emptyInventory(), "S1") => Option.None
+    reorderPointForSku(sampleInventory(), "S1") => Option.Some(5)
+
 fn needsReorder(inv: Inventory, warehouseId: String, skuId: String) -> Bool
     ? "True when available stock at this warehouse falls at or below the sku's reorder point."
     match reorderPointForSku(inv, skuId)
         Option.None -> false
         Option.Some(rp) -> availableStock(inv, warehouseId, skuId) <= rp
+
+verify needsReorder
+    needsReorder(emptyInventory(), "W1", "S1") => false
+    needsReorder(sampleInventory(), "W1", "S1") => false
+    needsReorder(sampleInventoryWithReserved(), "W1", "S1") => false
+    needsReorder(sampleLowStock(), "W1", "S1") => true
 
 fn sumOnHand(inv: Inventory, skuId: String, warehouseIds: List<String>) -> Int
     ? "Folds onHand across warehouse ids. Helper for totalOnHand."
@@ -237,9 +371,53 @@ fn sumOnHand(inv: Inventory, skuId: String, warehouseIds: List<String>) -> Int
         [] -> 0
         [wid, ..rest] -> getLevel(inv, wid, skuId).onHand + sumOnHand(inv, skuId, rest)
 
+verify sumOnHand
+    sumOnHand(emptyInventory(), "S1", []) => 0
+    sumOnHand(sampleInventory(), "S1", ["W1"]) => 10
+    sumOnHand(sampleTwoWarehouses(), "S1", ["W1", "W2"]) => 15
+
 fn totalOnHand(inv: Inventory, skuId: String) -> Int
     ? "Sums onHand across all warehouses for this sku."
     sumOnHand(inv, skuId, Map.keys(inv.warehouses))
+
+verify totalOnHand
+    totalOnHand(emptyInventory(), "S1") => 0
+    totalOnHand(sampleInventory(), "S1") => 10
+    totalOnHand(sampleTwoWarehouses(), "S1") => 15
+
+fn sampleInventory() -> Inventory
+    ? "Test-only helper: Inventory with one warehouse (W1), one sku (S1, reorderPoint=5) and 10 onHand."
+    base = registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC"))
+    withSku = registerSku(base, Sku(id = "S1", name = "Widget", reorderPoint = 5))
+    setLevel(withSku, "W1", "S1", StockLevel(onHand = 10, reserved = 0))
+
+verify sampleInventory
+    getLevel(sampleInventory(), "W1", "S1") => StockLevel(onHand = 10, reserved = 0)
+    knownWarehouse(sampleInventory(), "W1") => true
+    knownSku(sampleInventory(), "S1") => true
+
+fn sampleInventoryWithReserved() -> Inventory
+    ? "Test-only helper: sampleInventory but with 4 units already reserved for S1 at W1."
+    setLevel(sampleInventory(), "W1", "S1", StockLevel(onHand = 10, reserved = 4))
+
+verify sampleInventoryWithReserved
+    getLevel(sampleInventoryWithReserved(), "W1", "S1") => StockLevel(onHand = 10, reserved = 4)
+
+fn sampleTwoWarehouses() -> Inventory
+    ? "Test-only helper: two-warehouse inventory with W1=10 and W2=5 onHand for S1."
+    withW2 = registerWarehouse(sampleInventory(), Warehouse(id = "W2", location = "LA"))
+    setLevel(withW2, "W2", "S1", StockLevel(onHand = 5, reserved = 0))
+
+verify sampleTwoWarehouses
+    getLevel(sampleTwoWarehouses(), "W1", "S1") => StockLevel(onHand = 10, reserved = 0)
+    getLevel(sampleTwoWarehouses(), "W2", "S1") => StockLevel(onHand = 5, reserved = 0)
+
+fn sampleLowStock() -> Inventory
+    ? "Test-only helper: sampleInventory with stock reduced to 3 (at or below reorder point 5)."
+    setLevel(sampleInventory(), "W1", "S1", StockLevel(onHand = 3, reserved = 0))
+
+verify sampleLowStock
+    availableStock(sampleLowStock(), "W1", "S1") => 3
 
 fn main() -> Unit
     ! [Console.print]

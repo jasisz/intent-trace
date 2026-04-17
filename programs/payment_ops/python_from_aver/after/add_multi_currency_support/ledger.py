@@ -12,6 +12,24 @@ Multi-currency rules (this refactor):
   anomalies on the state, with enough detail for manual review.
 * ``sumAmountsInCurrency`` refuses to sum amounts across different currencies;
   callers that want a cross-currency total must ask for each currency explicitly.
+
+Design decisions:
+
+* Payment state is never mutated in place; every current state is derived by
+  replaying the append-only canonical event log. Dirty payment integrations are
+  easiest to audit when the stored history stays immutable, and replaying
+  canonical events keeps dedupe and reconciliation readable instead of hiding
+  rules in writes. Alternatives considered: mutable payment rows, ad-hoc status
+  overrides.
+
+* Amounts are never summed across currencies; the canonical currency is pinned
+  to the first event of a payment stream and every subsequent off-currency
+  event becomes a foreign-currency anomaly instead of being rolled into the
+  totals. Production traffic really does switch currencies mid-payment
+  (authorized in USD, refunded in the local currency Stripe sold), and
+  silently adding those integers would fabricate numbers and hide risk.
+  Alternatives considered: silent sum, silent conversion, rejecting
+  mixed-currency payments outright.
 """
 
 from __future__ import annotations

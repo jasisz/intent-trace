@@ -5,6 +5,17 @@ Tasks move through Todo → InProgress → Done, with Blocked as an off-path sta
 
 A Project tracks its active permission delegations: users to whom the owner has
 temporarily extended owner-level project-modification authority.
+
+Design decisions:
+
+* Delegations live as a list of user ids on the Project record, not as a
+  parallel record type and not as a field on the User. Delegations are
+  scoped to a single project (an owner going on vacation delegates rights
+  on that project, not globally), so the natural home is the Project
+  record. Storing the delegated user ids as a closed list keeps
+  permission checks a simple membership test and keeps revocation a list
+  removal. Alternatives considered: delegation list on User, a separate
+  Delegation record.
 """
 from __future__ import annotations
 

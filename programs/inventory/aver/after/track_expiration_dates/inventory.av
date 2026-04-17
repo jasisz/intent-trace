@@ -66,17 +66,32 @@ fn emptyInventory() -> Inventory
     ? "Builds an empty inventory with no warehouses, skus, or stock."
     Inventory(skus = Map.fromList([]), warehouses = Map.fromList([]), levels = Map.fromList([]))
 
+verify emptyInventory
+    Map.len(emptyInventory().warehouses) => 0
+    Map.len(emptyInventory().skus) => 0
+    Map.len(emptyInventory().levels) => 0
+
 fn registerSku(inv: Inventory, s: Sku) -> Inventory
     ? "Adds or replaces an SKU definition."
     Inventory.update(inv, skus = Map.set(inv.skus, s.id, s))
+
+verify registerSku
+    knownSku(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)), "S1") => true
 
 fn registerWarehouse(inv: Inventory, w: Warehouse) -> Inventory
     ? "Adds or replaces a warehouse definition."
     Inventory.update(inv, warehouses = Map.set(inv.warehouses, w.id, w))
 
+verify registerWarehouse
+    knownWarehouse(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")), "W1") => true
+
 fn zeroLevel() -> StockLevel
     ? "The stock level used for warehouse/sku pairs with no recorded stock yet."
     StockLevel(batches = [], reserved = 0)
+
+verify zeroLevel
+    zeroLevel().reserved => 0
+    List.len(zeroLevel().batches) => 0
 
 fn getLevelFromMap(perSku: Map<String, StockLevel>, skuId: String) -> StockLevel
     ? "Looks up a stock level in the per-sku submap, defaulting to zero."

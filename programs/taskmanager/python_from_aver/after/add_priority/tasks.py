@@ -2,7 +2,20 @@
 
 Every mutation consults validation for permission and transition rules;
 tasks contains no policy of its own — only the orchestration of checks
-and updates.
+and updates. Tasks carry a Priority; priority-sensitive rules (the
+Critical-only-Admin assignment rule) live in validation and are consulted
+by ``assign_task`` through ``can_assign_priority``.
+
+Design decisions:
+
+* ``create_task`` defaults priority to Medium rather than requiring callers
+  to pass it or defaulting to Low. Existing callers invoke ``create_task``
+  with no priority argument; defaulting to Medium keeps the baseline
+  assignment rule (owner-or-Admin + assignee-is-member) unchanged for
+  callers that never set priority explicitly. Callers that want a
+  different level can pass ``priority=Priority.X`` without a breaking
+  signature change. Alternatives considered: default to Low, require an
+  explicit priority argument at every call site.
 """
 from __future__ import annotations
 

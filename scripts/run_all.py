@@ -225,31 +225,10 @@ def process_one(
         append_slice(jsonl_path, slice_obj)
         done[k] = slice_obj
 
-    # Quality axis: per (prompt, lang), from full diff only (ablation independent)
-    q_key = slice_key(program, prompt_name, lang, "__quality__")
-    if q_key not in done:
-        full_diff = combine_diffs(before_dir, after_dir, "full", transform=None)
-        if full_diff.strip():
-            print(f"    [{lang}] ensemble quality-axis...", flush=True)
-            j_qual = ensemble(judge_quality_axis, client, JUDGE_MODELS, prompt_text, full_diff)
-            q_obj = {
-                "program": program,
-                "prompt": prompt_name,
-                "lang": lang,
-                "view": "__quality__",
-                "judgment_quality": j_qual,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-            append_slice(jsonl_path, q_obj)
-            done[q_key] = q_obj
-
-    # Attach quality to full/masked slices for easy aggregation
-    q = done.get(q_key)
-    if q:
-        for view in views:
-            k = slice_key(program, prompt_name, lang, view)
-            if k in done and "judgment_quality" not in done[k]:
-                done[k]["judgment_quality"] = q["judgment_quality"]
+    # Quality axis removed: was a 3-Claude sanity check on whether the agent's
+    # refactor actually fulfills the prompt. In practice it saturated near 8.5
+    # everywhere and didn't contribute to findings. Dropping it saves ~162 API
+    # calls per full benchmark run.
 
 
 def main() -> int:

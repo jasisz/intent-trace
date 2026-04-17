@@ -40,6 +40,11 @@ fn createTaskWithDeps(id: String, projectId: String, title: String, creator: Use
             dependsOnIds = depIds(deps)
         ))
 
+verify createTaskWithDeps
+    createTaskWithDeps("t2", "p1", "Publish", sampleOwner("u1"), []) => Result.Ok(Task(id = "t2", projectId = "p1", title = "Publish", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u1", dependsOnIds = []))
+    createTaskWithDeps("t2", "p1", "Publish", sampleOwner("u1"), [sampleTask("t1", "p1", "u1")]) => Result.Ok(Task(id = "t2", projectId = "p1", title = "Publish", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u1", dependsOnIds = ["t1"]))
+    createTaskWithDeps("t2", "p1", "Publish", sampleOwner("u1"), [sampleTask("t1", "p2", "u1")]) => Result.Err("Dependencies must belong to project p1")
+
 fn depIds(deps: List<Task>) -> List<String>
     ? "Extracts ids from dependency tasks, preserving order."
     match deps
@@ -74,6 +79,10 @@ fn assignTask(actor: User, project: Project, task: Task, assignee: User) -> Resu
         false -> Result.Err("Actor {actor.id} cannot assign tasks in project {project.id} to {assignee.id}")
         true -> Result.Ok(applyAssign(task, assignee.id))
 
+verify assignTask
+    assignTask(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), sampleMember("u2")) => Result.Ok(applyAssign(sampleTask("t1", "p1", "u1"), "u2"))
+    assignTask(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), sampleMember("u3")) => Result.Err("Actor u1 cannot assign tasks in project p1 to u3")
+
 fn applyUnassign(t: Task) -> Task
     ? "Unchecked: clears assigneeId."
     Task.update(t, assigneeId = Option.None)
@@ -83,6 +92,10 @@ fn unassignTask(actor: User, project: Project, task: Task) -> Result<Task, Strin
     match Validation.canModifyProject(actor, project)
         false -> Result.Err("Actor {actor.id} cannot modify tasks in project {project.id}")
         true -> Result.Ok(applyUnassign(task))
+
+verify unassignTask
+    unassignTask(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), applyAssign(sampleTask("t1", "p1", "u1"), "u2")) => Result.Ok(applyUnassign(applyAssign(sampleTask("t1", "p1", "u1"), "u2")))
+    unassignTask(User(id = "u9", name = "Outsider", role = Role.Member), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1")) => Result.Err("Actor u9 cannot modify tasks in project p1")
 
 fn applySetStatus(t: Task, next: Status) -> Task
     ? "Unchecked: writes new status onto the task."
@@ -105,11 +118,21 @@ fn joinIdsRec(head: String, tail: List<String>) -> String
         [] -> head
         [h, ..t] -> "{head}, {joinIdsRec(h, t)}"
 
+verify joinIdsRec
+    joinIdsRec("a", []) => "a"
+    joinIdsRec("a", ["b"]) => "a, b"
+    joinIdsRec("a", ["b", "c"]) => "a, b, c"
+
 fn setStatusChecked(t: Task, next: Status, deps: List<Task>) -> Result<Task, String>
     ? "Checks the full transition rule, including dependency completion for Done."
     match Validation.canTransitionToWithDeps(t.status, next, deps)
         true -> Result.Ok(applySetStatus(t, next))
         false -> setStatusRejection(t, next, deps)
+
+verify setStatusChecked
+    setStatusChecked(sampleTaskInProgress("t1", "p1", "u1"), Status.Done, []) => Result.Ok(applySetStatus(sampleTaskInProgress("t1", "p1", "u1"), Status.Done))
+    setStatusChecked(sampleTaskInProgress("t1", "p1", "u1"), Status.Done, [sampleTask("dep", "p1", "u1")]) => Result.Err("Cannot move task t1 to Done: blocked by dep")
+    setStatusChecked(sampleTask("t1", "p1", "u1"), Status.Done, []) => Result.Err("Invalid transition from Todo to Done")
 
 fn setStatusRejection(t: Task, next: Status, deps: List<Task>) -> Result<Task, String>
     ? "Produces a precise error: mentions blocking dependencies when Done is the target"
@@ -122,6 +145,13 @@ fn setStatusRejection(t: Task, next: Status, deps: List<Task>) -> Result<Task, S
         Status.InProgress -> Result.Err("Invalid transition from {statusName(t.status)} to InProgress")
         Status.Blocked -> Result.Err("Invalid transition from {statusName(t.status)} to Blocked")
 
+verify setStatusRejection
+    setStatusRejection(sampleTask("t1", "p1", "u1"), Status.Done, []) => Result.Err("Invalid transition from Todo to Done")
+    setStatusRejection(sampleTaskInProgress("t1", "p1", "u1"), Status.Done, [sampleTask("dep", "p1", "u1")]) => Result.Err("Cannot move task t1 to Done: blocked by dep")
+    setStatusRejection(sampleTask("t1", "p1", "u1"), Status.Todo, []) => Result.Err("Invalid transition from Todo to Todo")
+    setStatusRejection(sampleTaskInProgress("t1", "p1", "u1"), Status.InProgress, []) => Result.Err("Invalid transition from InProgress to InProgress")
+    setStatusRejection(sampleTask("t1", "p1", "u1"), Status.Blocked, []) => Result.Err("Invalid transition from Todo to Blocked")
+
 fn statusName(s: Status) -> String
     ? "Renders a Status constructor name for error messages."
     match s
@@ -132,7 +162,9 @@ fn statusName(s: Status) -> String
 
 verify statusName
     statusName(Status.Todo) => "Todo"
+    statusName(Status.InProgress) => "InProgress"
     statusName(Status.Done) => "Done"
+    statusName(Status.Blocked) => "Blocked"
 
 fn setStatus(actor: User, project: Project, task: Task, next: Status, deps: List<Task>) -> Result<Task, String>
     ? "Moves a task to a new status. Actor must have project write access and the"
@@ -143,6 +175,11 @@ fn setStatus(actor: User, project: Project, task: Task, next: Status, deps: List
         false -> Result.Err("Actor {actor.id} cannot change task status in project {project.id}")
         true -> setStatusChecked(task, next, deps)
 
+verify setStatus
+    setStatus(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTaskInProgress("t1", "p1", "u1"), Status.Done, []) => Result.Ok(applySetStatus(sampleTaskInProgress("t1", "p1", "u1"), Status.Done))
+    setStatus(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTaskInProgress("t1", "p1", "u1"), Status.Done, [sampleTask("dep", "p1", "u1")]) => Result.Err("Cannot move task t1 to Done: blocked by dep")
+    setStatus(User(id = "u9", name = "Outsider", role = Role.Member), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), Status.InProgress, []) => Result.Err("Actor u9 cannot change task status in project p1")
+
 fn addDependency(actor: User, project: Project, task: Task, dep: Task) -> Result<Task, String>
     ? "Adds a dependency to task. Actor must have project write access; the dependency"
       "task must belong to the same project as task."
@@ -150,11 +187,20 @@ fn addDependency(actor: User, project: Project, task: Task, dep: Task) -> Result
         false -> Result.Err("Actor {actor.id} cannot modify tasks in project {project.id}")
         true -> addDependencyChecked(task, dep)
 
+verify addDependency
+    addDependency(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), sampleTask("t2", "p1", "u1")) => Result.Ok(withDependency(sampleTask("t1", "p1", "u1"), "t2"))
+    addDependency(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), sampleTask("t2", "p2", "u1")) => Result.Err("Dependency task t2 is not in project p1")
+    addDependency(User(id = "u9", name = "Outsider", role = Role.Member), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), sampleTask("t2", "p1", "u1")) => Result.Err("Actor u9 cannot modify tasks in project p1")
+
 fn addDependencyChecked(task: Task, dep: Task) -> Result<Task, String>
     ? "Cross-project check and idempotent insertion of dep.id into dependsOnIds."
     match dep.projectId == task.projectId
         false -> Result.Err("Dependency task {dep.id} is not in project {task.projectId}")
         true -> Result.Ok(withDependency(task, dep.id))
+
+verify addDependencyChecked
+    addDependencyChecked(sampleTask("t1", "p1", "u1"), sampleTask("t2", "p1", "u1")) => Result.Ok(withDependency(sampleTask("t1", "p1", "u1"), "t2"))
+    addDependencyChecked(sampleTask("t1", "p1", "u1"), sampleTask("t2", "p2", "u1")) => Result.Err("Dependency task t2 is not in project p1")
 
 fn withDependency(task: Task, depId: String) -> Task
     ? "Appends depId to dependsOnIds unless already present."
@@ -165,3 +211,40 @@ fn withDependency(task: Task, depId: String) -> Task
 verify withDependency
     withDependency(Task(id = "t1", projectId = "p", title = "T", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = []), "d1") => Task(id = "t1", projectId = "p", title = "T", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = ["d1"])
     withDependency(Task(id = "t1", projectId = "p", title = "T", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = ["d1"]), "d1") => Task(id = "t1", projectId = "p", title = "T", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = ["d1"])
+
+fn sampleOwner(ownerId: String) -> User
+    ? "Test-only helper: builds an Admin user used as project owner in verify blocks."
+    User(id = ownerId, name = "Owner", role = Role.Admin)
+
+verify sampleOwner
+    sampleOwner("u1") => User(id = "u1", name = "Owner", role = Role.Admin)
+
+fn sampleMember(memberId: String) -> User
+    ? "Test-only helper: builds a Member user used as an assignee in verify blocks."
+    User(id = memberId, name = "Member", role = Role.Member)
+
+verify sampleMember
+    sampleMember("u2") => User(id = "u2", name = "Member", role = Role.Member)
+
+fn sampleProjectWithMember(projectId: String, ownerId: String, memberId: String) -> Project
+    ? "Test-only helper: builds a project with owner and an additional member so"
+      "verify blocks can exercise assign/unassign without stacking constructors."
+    Project(id = projectId, name = "Demo", ownerId = ownerId, memberIds = [memberId, ownerId])
+
+verify sampleProjectWithMember
+    sampleProjectWithMember("p1", "u1", "u2") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"])
+
+fn sampleTask(taskId: String, projectId: String, creatorId: String) -> Task
+    ? "Test-only helper: builds a fresh Todo task in a project, authored by creatorId."
+    createTask(taskId, projectId, "Write docs", User(id = creatorId, name = "Owner", role = Role.Admin))
+
+verify sampleTask
+    sampleTask("t1", "p1", "u1") => Task(id = "t1", projectId = "p1", title = "Write docs", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u1", dependsOnIds = [])
+
+fn sampleTaskInProgress(taskId: String, projectId: String, creatorId: String) -> Task
+    ? "Test-only helper: builds an InProgress task so verify blocks can exercise the"
+      "Done transition path without reaching through setStatus first."
+    Task.update(sampleTask(taskId, projectId, creatorId), status = Status.InProgress)
+
+verify sampleTaskInProgress
+    sampleTaskInProgress("t1", "p1", "u1") => Task(id = "t1", projectId = "p1", title = "Write docs", status = Status.InProgress, assigneeId = Option.None, createdByUserId = "u1", dependsOnIds = [])

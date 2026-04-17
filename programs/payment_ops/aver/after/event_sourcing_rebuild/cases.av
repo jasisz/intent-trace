@@ -4,7 +4,7 @@ module Cases
         "Dirty payment operations need stable case keys so re-running ingest or reconciliation"
         "does not keep opening the same human task forever."
     exposes [makeCaseDraft, draftsFromStates, statusText, parseStatus, materializeNewCases, resolveCase, filterByStatusLabel, openCasesForPayment, findCaseById, auditForOpenedCase, auditForResolvedCase]
-    depends [Domain.Types]
+    depends [Types]
 
 decision ManualReviewInsteadOfSilentFixup
     date = "2026-03-12"

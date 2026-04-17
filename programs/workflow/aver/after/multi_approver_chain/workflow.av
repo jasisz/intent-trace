@@ -91,6 +91,11 @@ fn statusOf(r: Report) -> Status
 
 verify statusOf
     statusOf(emptyReport("R1", "U1")) => Status.Draft
+    statusOf(sampleSubmitted("R1", "U1")) => Status.Submitted
+    statusOf(reportAt(Status.PartiallyApproved, Money(cents = 250000), ["A1"])) => Status.PartiallyApproved
+    statusOf(applyApproveFinal(sampleSubmitted("R1", "U1"), testUser("A1", 100000), 3000)) => Status.Approved
+    statusOf(applyReject(sampleSubmitted("R1", "U1"), "M", "no", 3000)) => Status.Rejected
+    statusOf(applyPay(sampleSubmitted("R1", "U1"), "U1", 4000)) => Status.Paid
 
 fn eventsOf(r: Report) -> List<Event>
     ? "Returns the audit trail events in chronological order (oldest first)."
@@ -127,6 +132,7 @@ fn titleIsPresent(r: Report) -> Bool
 
 verify titleIsPresent
     titleIsPresent(emptyReport("R1", "U1")) => false
+    titleIsPresent(withTitleAndAmount(emptyReport("R1", "U1"), "Travel", Money(cents = 100))) => true
 
 fn largeAmountThresholdCents() -> Int
     ? "Policy threshold in cents. Amounts strictly greater than this need a multi-approver chain."
@@ -161,17 +167,28 @@ fn applySubmit(r: Report, actorId: String, timestampMs: Int) -> Report
     withStatus = Report.update(r, status = Status.Submitted)
     recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "submitted"))
 
+verify applySubmit
+    statusOf(applySubmit(emptyReport("R1", "U1"), "U1", 1000)) => Status.Submitted
+
 fn submitValidated(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
     ? "Submit path taken when the report is already known to be Draft. Checks invariants."
     match titleIsPresent(r)
         false -> Result.Err("Report title must not be empty")
         true -> submitValidatedAmount(r, actorId, timestampMs)
 
+verify submitValidated
+    submitValidated(emptyReport("R1", "U1"), "U1", 1000) => Result.Err("Report title must not be empty")
+    submitValidated(withTitleAndAmount(emptyReport("R1", "U1"), "t", Money(cents = 100)), "U1", 1000) => Result.Ok(applySubmit(withTitleAndAmount(emptyReport("R1", "U1"), "t", Money(cents = 100)), "U1", 1000))
+
 fn submitValidatedAmount(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
     ? "Amount check after title check."
     match amountIsPositive(r.amount)
         false -> Result.Err("Report amount must be positive")
         true -> Result.Ok(applySubmit(r, actorId, timestampMs))
+
+verify submitValidatedAmount
+    submitValidatedAmount(withTitleAndAmount(emptyReport("R1", "U1"), "t", Money(cents = 0)), "U1", 1000) => Result.Err("Report amount must be positive")
+    submitValidatedAmount(withTitleAndAmount(emptyReport("R1", "U1"), "t", Money(cents = 100)), "U1", 1000) => Result.Ok(applySubmit(withTitleAndAmount(emptyReport("R1", "U1"), "t", Money(cents = 100)), "U1", 1000))
 
 fn submitReport(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
     ? "Moves a Draft report to Submitted. Fails if status is not Draft or invariants violated."
@@ -185,6 +202,7 @@ fn submitReport(r: Report, actorId: String, timestampMs: Int) -> Result<Report, 
 
 verify submitReport
     submitReport(emptyReport("R1", "U1"), "U1", 1000) => Result.Err("Report title must not be empty")
+    submitReport(withTitleAndAmount(emptyReport("R1", "U1"), "t", Money(cents = 100)), "U1", 1000) => Result.Ok(applySubmit(withTitleAndAmount(emptyReport("R1", "U1"), "t", Money(cents = 100)), "U1", 1000))
 
 fn approverHasAuthority(approver: User, amount: Money) -> Bool
     ? "True if the approver's limit covers the report amount."
@@ -209,17 +227,27 @@ fn applyApproveFinal(r: Report, approver: User, timestampMs: Int) -> Report
     withStatus = Report.update(withApprover, status = Status.Approved)
     recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = approver.id, note = "approved"))
 
+verify applyApproveFinal
+    statusOf(applyApproveFinal(sampleSubmitted("R1", "U1"), testUser("A1", 100000), 3000)) => Status.Approved
+
 fn applyApprovePartial(r: Report, approver: User, timestampMs: Int) -> Report
     ? "Unchecked: records the approver, marks the report PartiallyApproved, and logs a partial-approval event."
     withApprover = recordApprover(r, approver.id)
     withStatus = Report.update(withApprover, status = Status.PartiallyApproved)
     recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = approver.id, note = "partially approved"))
 
+verify applyApprovePartial
+    statusOf(applyApprovePartial(sampleSubmitted("R1", "U1"), testUser("A1", 100000), 3000)) => Status.PartiallyApproved
+
 fn applyApproveByCount(r: Report, approver: User, timestampMs: Int, requiredAfter: Int, collectedAfter: Int) -> Report
     ? "Unchecked: finalizes or partially advances based on whether the collected count meets the required count."
     match collectedAfter >= requiredAfter
         true -> applyApproveFinal(r, approver, timestampMs)
         false -> applyApprovePartial(r, approver, timestampMs)
+
+verify applyApproveByCount
+    statusOf(applyApproveByCount(sampleSubmitted("R1", "U1"), testUser("A1", 100000), 3000, 1, 1)) => Status.Approved
+    statusOf(applyApproveByCount(sampleSubmitted("R1", "U1"), testUser("A1", 100000), 3000, 2, 1)) => Status.PartiallyApproved
 
 fn advanceApproval(r: Report, approver: User, timestampMs: Int) -> Report
     ? "Unchecked advance: assumes authority and non-duplication have already been verified."
@@ -231,17 +259,30 @@ fn advanceApproval(r: Report, approver: User, timestampMs: Int) -> Report
         List.len(r.approvals) + 1
     )
 
+verify advanceApproval
+    statusOf(advanceApproval(reportAt(Status.Submitted, Money(cents = 50000), []), testUser("A1", 100000), 1000)) => Status.Approved
+    statusOf(advanceApproval(reportAt(Status.Submitted, Money(cents = 250000), []), testUser("A1", 1000000), 1000)) => Status.PartiallyApproved
+    statusOf(advanceApproval(reportAt(Status.PartiallyApproved, Money(cents = 250000), ["A1"]), testUser("A2", 1000000), 1000)) => Status.Approved
+
 fn approveIfNotDuplicate(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
     ? "Second-stage guard: rejects duplicate approvers, otherwise advances the chain."
     match hasAlreadyApproved(r, approver.id)
         true -> Result.Err("Approver {approver.id} has already approved this report")
         false -> Result.Ok(advanceApproval(r, approver, timestampMs))
 
+verify approveIfNotDuplicate
+    approveIfNotDuplicate(reportAt(Status.PartiallyApproved, Money(cents = 250000), ["A1"]), testUser("A1", 1000000), 1000) => Result.Err("Approver A1 has already approved this report")
+    approveIfNotDuplicate(reportAt(Status.PartiallyApproved, Money(cents = 250000), ["A1"]), testUser("A2", 1000000), 1000) => Result.Ok(advanceApproval(reportAt(Status.PartiallyApproved, Money(cents = 250000), ["A1"]), testUser("A2", 1000000), 1000))
+
 fn approveIfAuthorized(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
     ? "First-stage guard: rejects approvers whose limit does not cover the amount."
     match approverHasAuthority(approver, r.amount)
         false -> Result.Err("Approver {approver.id} limit too low for amount")
         true -> approveIfNotDuplicate(r, approver, timestampMs)
+
+verify approveIfAuthorized
+    approveIfAuthorized(reportAt(Status.Submitted, Money(cents = 50000), []), testUser("A1", 100), 1000) => Result.Err("Approver A1 limit too low for amount")
+    approveIfAuthorized(reportAt(Status.Submitted, Money(cents = 50000), []), testUser("A1", 100000), 1000) => Result.Ok(advanceApproval(reportAt(Status.Submitted, Money(cents = 50000), []), testUser("A1", 100000), 1000))
 
 fn approveFromSubmitted(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
     ? "Approves a Submitted report. For small amounts this finalizes; for large amounts it marks PartiallyApproved."
@@ -309,6 +350,11 @@ verify approveReport
         testUser("A2", 100000),
         1000
     ) => Result.Err("Report already paid")
+    approveReport(
+        reportAt(Status.Submitted, Money(cents = 50000), []),
+        testUser("A1", 100000),
+        1000
+    ) => Result.Ok(advanceApproval(reportAt(Status.Submitted, Money(cents = 50000), []), testUser("A1", 100000), 1000))
 
 fn statusAfterApprove(r: Report, approver: User) -> Result<Status, String>
     ? "Projects approveReport's outcome onto the resulting status, preserving error strings."
@@ -367,6 +413,9 @@ fn applyReject(r: Report, actorId: String, reason: String, timestampMs: Int) -> 
     withStatus = Report.update(r, status = Status.Rejected)
     recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "rejected: {reason}"))
 
+verify applyReject
+    statusOf(applyReject(sampleSubmitted("R1", "U1"), "M", "incomplete receipts", 3000)) => Status.Rejected
+
 fn rejectReport(r: Report, actorId: String, reason: String, timestampMs: Int) -> Result<Report, String>
     ? "Moves a Submitted or PartiallyApproved report to Rejected with a reason."
     match r.status
@@ -377,10 +426,17 @@ fn rejectReport(r: Report, actorId: String, reason: String, timestampMs: Int) ->
         Status.Rejected -> Result.Err("Report already rejected")
         Status.Paid -> Result.Err("Report already paid")
 
+verify rejectReport
+    rejectReport(emptyReport("R1", "U1"), "M", "missing receipts", 3000) => Result.Err("Cannot reject a Draft report")
+    rejectReport(sampleSubmitted("R1", "U1"), "M", "missing receipts", 3000) => Result.Ok(applyReject(sampleSubmitted("R1", "U1"), "M", "missing receipts", 3000))
+
 fn applyPay(r: Report, actorId: String, timestampMs: Int) -> Report
     ? "Unchecked: marks the report as Paid and records the payment event."
     withStatus = Report.update(r, status = Status.Paid)
     recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "paid"))
+
+verify applyPay
+    statusOf(applyPay(sampleSubmitted("R1", "U1"), "U1", 4000)) => Status.Paid
 
 fn payReport(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
     ? "Moves an Approved report to Paid."
@@ -391,6 +447,28 @@ fn payReport(r: Report, actorId: String, timestampMs: Int) -> Result<Report, Str
         Status.PartiallyApproved -> Result.Err("Report must be fully approved before payment")
         Status.Rejected -> Result.Err("Cannot pay a rejected report")
         Status.Paid -> Result.Err("Report already paid")
+
+verify payReport
+    payReport(emptyReport("R1", "U1"), "U1", 1000) => Result.Err("Cannot pay a Draft report")
+    payReport(sampleApproved("R1", "U1"), "U1", 5000) => Result.Ok(applyPay(sampleApproved("R1", "U1"), "U1", 5000))
+
+fn sampleSubmitted(reportId: String, submitterId: String) -> Report
+    ? "Test-only helper: builds a Submitted report directly via applySubmit so that"
+      "verify blocks can exercise Submitted-state transitions without chaining through"
+      "the title/amount validation in submitReport."
+    filled = withTitleAndAmount(emptyReport(reportId, submitterId), "t", Money(cents = 100))
+    applySubmit(filled, submitterId, 1000)
+
+verify sampleSubmitted
+    statusOf(sampleSubmitted("R1", "U1")) => Status.Submitted
+
+fn sampleApproved(reportId: String, submitterId: String) -> Report
+    ? "Test-only helper: builds an Approved report via applyApproveFinal so verify blocks for"
+      "payReport can exercise the Approved → Paid path."
+    applyApproveFinal(sampleSubmitted(reportId, submitterId), testUser("M", 100000), 3000)
+
+verify sampleApproved
+    statusOf(sampleApproved("R1", "U1")) => Status.Approved
 
 fn isTerminal(s: Status) -> Bool
     ? "True if the state does not permit further transitions."

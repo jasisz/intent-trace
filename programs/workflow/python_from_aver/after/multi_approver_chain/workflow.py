@@ -10,6 +10,30 @@ Large amounts (above ``HIGH_AMOUNT_THRESHOLD_CENTS``) require a chain of
 approvals: each qualified approver signs off in turn, and the report remains
 in the intermediate ``PendingApproval`` state until the last required
 approver has signed. Small amounts still approve on the first sign-off.
+
+Design decisions:
+
+* Status is a closed sum type (Enum), not a string. Expense reports have a
+  small, fixed set of lifecycle states, and closing the type lets the
+  type-checker flag any future code path that forgets to handle one.
+  String-typed status fields would silently accept typos and new values.
+  Alternatives considered: string status codes, integer status codes.
+
+* The audit trail lives inline on the Report record, not in a separate store.
+  Callers routinely need to show who did what when; keeping events on the
+  report keeps replay and explanation queries cheap. A separate audit store
+  would force every consumer to join two sources. Alternatives considered:
+  external audit store, no audit log.
+
+* Large amounts require a chain of distinct approvers and progress through
+  an intermediate ``PENDING_APPROVAL`` state. Reports above a policy
+  threshold are too risky to clear with a single approver; an intermediate
+  state plus a collected-approver list on the report itself keeps progress
+  visible to replay with a single read (no side store). Distinct approvers
+  are required so a single user cannot fulfil the whole chain. Below the
+  threshold the behaviour is unchanged — a single authorized approval wins.
+  Alternatives considered: counter-only tracking, a parallel approval set,
+  an external approval queue.
 """
 from __future__ import annotations
 
@@ -78,6 +102,7 @@ def empty_report(report_id: str, submitter_id: str) -> Report:
 
 
 def status_of(r: Report) -> Status:
+    """Return the current lifecycle status of the report."""
     return r.status
 
 
@@ -92,6 +117,7 @@ def approvals_of(r: Report) -> list[str]:
 
 
 def _record_event(r: Report, e: Event) -> Report:
+    """Append an event to the report's audit trail."""
     return replace(r, events=r.events + (e,))
 
 
@@ -101,10 +127,12 @@ def with_title_and_amount(r: Report, title: str, amount: Money) -> Report:
 
 
 def amount_is_positive(m: Money) -> bool:
+    """True if the money amount is strictly positive."""
     return m.cents > 0
 
 
 def title_is_present(r: Report) -> bool:
+    """True if the report title is non-empty."""
     return len(r.title) > 0
 
 
@@ -140,10 +168,12 @@ def submit_report(r: Report, actor_id: str, timestamp_ms: int) -> Report:
 
 
 def _approver_has_authority(approver: User, amount: Money) -> bool:
+    """True if the approver's limit covers the report amount."""
     return approver.approval_limit_cents >= amount.cents
 
 
 def _is_awaiting_approval(s: Status) -> bool:
+    """True for states where an approver can still sign off (Submitted or PendingApproval)."""
     return s is Status.SUBMITTED or s is Status.PENDING_APPROVAL
 
 

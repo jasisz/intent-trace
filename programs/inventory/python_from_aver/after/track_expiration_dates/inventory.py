@@ -5,6 +5,35 @@ rather than a single on-hand count. Reservations remain a scalar count and are
 effectively backed by the oldest batches (FIFO by expiration date) at fulfillment
 time. Operations raise ValueError on invalid input (unknown warehouse/sku,
 non-positive qty, over-commit).
+
+Design decisions:
+
+* Available stock and reserved stock are tracked separately on each StockLevel,
+  not collapsed into a single counter. Reserved stock represents orders that
+  have been accepted but not yet shipped; collapsing reserved into available
+  would allow a second reservation to over-commit the same physical units.
+  Tracking them separately makes the invariant reserved <= on_hand checkable
+  at any point. Alternatives considered: single available counter, negative
+  available as reserved.
+
+* Invalid operations raise ValueError rather than returning a tagged result.
+  Unknown warehouse/sku, non-positive quantities, and over-reservations are
+  all expected at runtime, and Python callers branch on them via try/except.
+  (The Aver source returns Result to make failure modes explicit in the call
+  site; here the Pythonic equivalent is a narrow exception type.) Alternatives
+  considered: silent no-op, panic.
+
+* On-hand stock is stored as a FIFO-sorted list of dated batches per SKU, not
+  a single on-hand counter. Real warehouses receive the same SKU multiple
+  times with different expiration dates, and downstream decisions (ship,
+  discount, purge) depend on per-batch dates. A single ``on_hand`` counter
+  erases this information. Storing batches as a list kept sorted by
+  ``expires_on`` makes "ship oldest first" the natural head-of-list operation
+  and keeps "expired as of today" a simple scan. Reservations stay as a
+  scalar because they only commit units, not specific batches; fulfilment is
+  what materializes the FIFO choice. Alternatives considered: single on-hand
+  counter, unsorted batches searched on fulfill, batch id assigned on
+  reserve.
 """
 from __future__ import annotations
 
@@ -44,6 +73,7 @@ class StockLevel:
 
     @property
     def on_hand(self) -> int:
+        """Total on-hand units across all batches."""
         return sum(b.qty for b in self.batches)
 
 
@@ -55,18 +85,22 @@ class Inventory:
 
 
 def empty_inventory() -> Inventory:
+    """Build an empty inventory with no warehouses, SKUs, or batches."""
     return Inventory()
 
 
 def register_sku(inv: Inventory, s: Sku) -> Inventory:
+    """Add or replace an SKU definition."""
     return replace(inv, skus={**inv.skus, s.id: s})
 
 
 def register_warehouse(inv: Inventory, w: Warehouse) -> Inventory:
+    """Add or replace a warehouse definition."""
     return replace(inv, warehouses={**inv.warehouses, w.id: w})
 
 
 def get_level(inv: Inventory, warehouse_id: str, sku_id: str) -> StockLevel:
+    """Return the stock level at (warehouse, sku); empty if none recorded."""
     per_sku = inv.levels.get(warehouse_id)
     if per_sku is None:
         return StockLevel()
@@ -74,6 +108,7 @@ def get_level(inv: Inventory, warehouse_id: str, sku_id: str) -> StockLevel:
 
 
 def set_level(inv: Inventory, warehouse_id: str, sku_id: str, lvl: StockLevel) -> Inventory:
+    """Store a stock level for (warehouse, sku); overwrite any previous value."""
     per_sku = dict(inv.levels.get(warehouse_id, {}))
     per_sku[sku_id] = lvl
     new_levels = {**inv.levels, warehouse_id: per_sku}
@@ -81,15 +116,18 @@ def set_level(inv: Inventory, warehouse_id: str, sku_id: str, lvl: StockLevel) -
 
 
 def available_stock(inv: Inventory, warehouse_id: str, sku_id: str) -> int:
+    """Return units currently available for new reservations: on_hand minus reserved."""
     lvl = get_level(inv, warehouse_id, sku_id)
     return lvl.on_hand - lvl.reserved
 
 
 def known_warehouse(inv: Inventory, warehouse_id: str) -> bool:
+    """True if the warehouse has been registered."""
     return warehouse_id in inv.warehouses
 
 
 def known_sku(inv: Inventory, sku_id: str) -> bool:
+    """True if the SKU has been registered."""
     return sku_id in inv.skus
 
 

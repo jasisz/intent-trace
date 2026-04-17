@@ -291,6 +291,7 @@ fn releaseReservation(inv: Inventory, warehouseId: String, skuId: String, rid: S
 verify releaseReservation
     releaseReservation(emptyInventory(), "W1", "S1", "R1") => Result.Err("Unknown warehouse: W1")
     reservedQty(getLevel(unwrapInv(releaseReservation(reserveOk(seedInvWithStock(10), "R1", 3, 0), "W1", "S1", "R1"), seedInv()), "W1", "S1")) => 0
+    releaseReservation(reserveOk(seedInvWithStock(10), "R1", 3, 0), "W1", "S1", "R1") => Result.Ok(applyRelease(reserveOk(seedInvWithStock(10), "R1", 3, 0), "W1", "S1", "R1"))
 fn applyFulfill(inv: Inventory, warehouseId: String, skuId: String, r: Reservation) -> Inventory
     ? "Unchecked: removes the reservation by id and subtracts r.qty from onHand."
     lvl = getLevel(inv, warehouseId, skuId)
@@ -316,6 +317,7 @@ fn fulfillReservation(inv: Inventory, warehouseId: String, skuId: String, rid: S
 verify fulfillReservation
     fulfillReservation(emptyInventory(), "W1", "S1", "R1") => Result.Err("Unknown warehouse: W1")
     getLevel(unwrapInv(fulfillReservation(reserveOk(seedInvWithStock(10), "R1", 3, 0), "W1", "S1", "R1"), seedInv()), "W1", "S1").onHand => 7
+    fulfillReservation(reserveOk(seedInvWithStock(10), "R1", 3, 0), "W1", "S1", "R1") => Result.Ok(applyFulfill(reserveOk(seedInvWithStock(10), "R1", 3, 0), "W1", "S1", Reservation(id = "R1", qty = 3, createdAtMs = 0)))
 fn seedTwoWarehouses(w1OnHand: Int, w2OnHand: Int) -> Inventory
     ? "Test helper: two warehouses W1/W2 and one sku S1 with given onHand at each."
     withW1 = registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC"))
@@ -363,6 +365,7 @@ fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: I
 verify rebalance
     rebalance(emptyInventory(), "W1", "W2", "S1", 0) => Result.Err("Rebalance qty must be positive")
     getLevel(unwrapInv(rebalance(seedTwoWarehouses(10, 0), "W1", "W2", "S1", 4), seedInv()), "W2", "S1").onHand => 4
+    rebalance(seedTwoWarehouses(10, 0), "W1", "W2", "S1", 4) => Result.Ok(applyRebalance(seedTwoWarehouses(10, 0), "W1", "W2", "S1", 4))
 fn reorderPointForSku(inv: Inventory, skuId: String) -> Option<Int>
     ? "Looks up the reorder point of a registered sku."
     match Map.get(inv.skus, skuId)
@@ -386,6 +389,7 @@ fn sumOnHandAcc(inv: Inventory, skuId: String, warehouseIds: List<String>, acc: 
         [wid, ..rest] -> sumOnHandAcc(inv, skuId, rest, acc + getLevel(inv, wid, skuId).onHand)
 verify sumOnHandAcc
     sumOnHandAcc(seedTwoWarehouses(4, 3), "S1", ["W1", "W2"], 0) => 7
+    sumOnHandAcc(emptyInventory(), "S1", [], 0) => 0
 fn totalOnHand(inv: Inventory, skuId: String) -> Int
     ? "Sums onHand across all warehouses for this sku."
     sumOnHandAcc(inv, skuId, Map.keys(inv.warehouses), 0)

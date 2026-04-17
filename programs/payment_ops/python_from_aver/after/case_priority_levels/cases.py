@@ -7,6 +7,23 @@ This variant adds an operator-facing priority dimension. Every case carries a
 `CasePriority` assigned automatically from its kind and amount at materialization
 time, and operators can override that priority when resolving or re-prioritizing
 a case. The derived priority is preserved in the audit trail.
+
+Design decisions:
+
+* Suspicious payment histories open an explicit manual-review case instead of
+  being silently repaired or reduced to a log warning. Backoffice systems
+  should not silently fix suspicious payment histories, and opening explicit
+  manual-review cases keeps the risk visible and auditable. Alternatives
+  considered: silent repair, log-only warnings.
+
+* Case priority is derived from kind and amount at materialization time but
+  remains overridable by operators during resolution or with an explicit
+  re-prioritize call. Every manual-review case used to look the same to
+  operators, so a $50 duplicate refund competed for attention with a $500k
+  reconciliation break. A derived default keeps the queue usable without
+  removing human judgement, and the audit trail records the chosen priority
+  so overrides stay explainable. Alternatives considered: no priority at all,
+  operator-only priority, amount-only priority.
 """
 
 from __future__ import annotations

@@ -33,6 +33,11 @@ fn assignTask(actor: User, project: Project, task: Task, assignee: User) -> Resu
         false -> Result.Err("Actor {actor.id} cannot assign tasks in project {project.id} to {assignee.id}")
         true -> Result.Ok(applyAssign(task, assignee.id))
 
+verify assignTask
+    assignTask(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), sampleMember("u2")) => Result.Ok(applyAssign(sampleTask("t1", "p1", "u1"), "u2"))
+    assignTask(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), sampleMember("u3")) => Result.Err("Actor u1 cannot assign tasks in project p1 to u3")
+    assignTask(sampleMember("u2"), sampleProjectWithDelegate("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), sampleMember("u2")) => Result.Ok(applyAssign(sampleTask("t1", "p1", "u1"), "u2"))
+
 fn applyUnassign(t: Task) -> Task
     ? "Unchecked: clears assigneeId."
     Task.update(t, assigneeId = Option.None)
@@ -42,6 +47,10 @@ fn unassignTask(actor: User, project: Project, task: Task) -> Result<Task, Strin
     match Validation.canModifyProject(actor, project)
         false -> Result.Err("Actor {actor.id} cannot modify tasks in project {project.id}")
         true -> Result.Ok(applyUnassign(task))
+
+verify unassignTask
+    unassignTask(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), applyAssign(sampleTask("t1", "p1", "u1"), "u2")) => Result.Ok(applyUnassign(applyAssign(sampleTask("t1", "p1", "u1"), "u2")))
+    unassignTask(User(id = "u9", name = "Outsider", role = Role.Member), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1")) => Result.Err("Actor u9 cannot modify tasks in project p1")
 
 fn applySetStatus(t: Task, next: Status) -> Task
     ? "Unchecked: writes new status onto the task."
@@ -53,9 +62,56 @@ fn setStatusChecked(t: Task, next: Status) -> Result<Task, String>
         false -> Result.Err("Invalid transition")
         true -> Result.Ok(applySetStatus(t, next))
 
+verify setStatusChecked
+    setStatusChecked(sampleTask("t1", "p1", "u1"), Status.InProgress) => Result.Ok(applySetStatus(sampleTask("t1", "p1", "u1"), Status.InProgress))
+    setStatusChecked(sampleTask("t1", "p1", "u1"), Status.Done) => Result.Err("Invalid transition")
+
 fn setStatus(actor: User, project: Project, task: Task, next: Status) -> Result<Task, String>
     ? "Moves a task to a new status. Actor must have project write access and the"
       "transition must be allowed by Validation.canTransitionTo."
     match Validation.canModifyProject(actor, project)
         false -> Result.Err("Actor {actor.id} cannot change task status in project {project.id}")
         true -> setStatusChecked(task, next)
+
+verify setStatus
+    setStatus(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), Status.InProgress) => Result.Ok(applySetStatus(sampleTask("t1", "p1", "u1"), Status.InProgress))
+    setStatus(User(id = "u9", name = "Outsider", role = Role.Member), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), Status.InProgress) => Result.Err("Actor u9 cannot change task status in project p1")
+    setStatus(sampleOwner("u1"), sampleProjectWithMember("p1", "u1", "u2"), sampleTask("t1", "p1", "u1"), Status.Done) => Result.Err("Invalid transition")
+
+fn sampleOwner(ownerId: String) -> User
+    ? "Test-only helper: builds an Admin user used as project owner in verify blocks."
+    User(id = ownerId, name = "Owner", role = Role.Admin)
+
+verify sampleOwner
+    sampleOwner("u1") => User(id = "u1", name = "Owner", role = Role.Admin)
+
+fn sampleMember(memberId: String) -> User
+    ? "Test-only helper: builds a Member user used as an assignee in verify blocks."
+    User(id = memberId, name = "Member", role = Role.Member)
+
+verify sampleMember
+    sampleMember("u2") => User(id = "u2", name = "Member", role = Role.Member)
+
+fn sampleProjectWithMember(projectId: String, ownerId: String, memberId: String) -> Project
+    ? "Test-only helper: builds a project with owner and an additional member (no"
+      "delegations) so verify blocks can exercise assign/unassign without stacking"
+      "constructors."
+    Project(id = projectId, name = "Demo", ownerId = ownerId, memberIds = [memberId, ownerId], delegateIds = [])
+
+verify sampleProjectWithMember
+    sampleProjectWithMember("p1", "u1", "u2") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"], delegateIds = [])
+
+fn sampleProjectWithDelegate(projectId: String, ownerId: String, delegateId: String) -> Project
+    ? "Test-only helper: builds a project where delegateId is both a member and holds"
+      "a delegation, so verify blocks can exercise the delegate-can-modify path."
+    Project(id = projectId, name = "Demo", ownerId = ownerId, memberIds = [delegateId, ownerId], delegateIds = [delegateId])
+
+verify sampleProjectWithDelegate
+    sampleProjectWithDelegate("p1", "u1", "u2") => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u2", "u1"], delegateIds = ["u2"])
+
+fn sampleTask(taskId: String, projectId: String, creatorId: String) -> Task
+    ? "Test-only helper: builds a fresh Todo task in a project, authored by creatorId."
+    createTask(taskId, projectId, "Write docs", User(id = creatorId, name = "Owner", role = Role.Admin))
+
+verify sampleTask
+    sampleTask("t1", "p1", "u1") => Task(id = "t1", projectId = "p1", title = "Write docs", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u1")
