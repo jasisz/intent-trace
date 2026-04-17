@@ -189,6 +189,61 @@ def plot_ablation(agg: dict, out_path: Path) -> None:
     print(f"wrote: {out_path}")
 
 
+READER_PATHS = {
+    "Sonnet": "results/ensemble_20260417_100608/slices.jsonl",
+    "gpt-4.1": "results/ensemble_20260417_125110/slices.jsonl",
+    "Gemini Flash": "results/ensemble_20260417_131755/slices.jsonl",
+}
+READER_COLORS = {
+    "Sonnet": AMBER,
+    "gpt-4.1": "#2563eb",  # blue — GPT family
+    "Gemini Flash": "#16a34a",  # green — Google family
+}
+
+
+def plot_3way_readers(out_path: Path) -> None:
+    readers_data: dict[str, dict] = {}
+    for name, path in READER_PATHS.items():
+        p = Path(path)
+        if not p.exists():
+            continue
+        rows = [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+        rows = [r for r in rows if r.get("view") in ("full", "masked")]
+        readers_data[name] = aggregate(rows)
+
+    cells = sorted({k for d in readers_data.values() for k in d})
+    labels = [f"{lang}\n{view}" for lang, view in cells]
+
+    n_readers = len(readers_data)
+    bar_w = 0.25
+    fig, ax = plt.subplots(figsize=(13, 6.5))
+    positions = range(len(cells))
+    for i, (reader, d) in enumerate(readers_data.items()):
+        values = [d[k]["avg"] if k in d else 0 for k in cells]
+        xs = [p + (i - (n_readers - 1) / 2) * bar_w for p in positions]
+        bars = ax.bar(xs, values, bar_w, color=READER_COLORS[reader],
+                      edgecolor=SLATE, linewidth=0.8, label=reader)
+        for bar, v in zip(bars, values):
+            if v > 0:
+                ax.text(bar.get_x() + bar.get_width() / 2, v + 0.04,
+                        f"{v:.2f}", ha="center", va="bottom",
+                        fontsize=7.5, color=SLATE)
+    ax.set_xticks(list(positions))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Average score (P+D)/2", fontweight="bold")
+    ax.set_title("Intent-trace: reader family dependence across 3 vendors",
+                 fontweight="bold", pad=15, color=SLATE)
+    ax.set_ylim(7.0, 9.3)
+    ax.legend(loc="lower right", frameon=True,
+              facecolor=BG, edgecolor=SLATE_LIGHT)
+    ax.set_axisbelow(True)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, facecolor=BG, bbox_inches="tight")
+    print(f"wrote: {out_path}")
+
+
 def main() -> int:
     results_root = Path("results")
     rows = load_latest(results_root)
@@ -200,6 +255,7 @@ def main() -> int:
     plot_ranking(agg, out_dir / "ranking.png")
     plot_axes(agg, out_dir / "axes.png")
     plot_ablation(agg, out_dir / "ablation.png")
+    plot_3way_readers(out_dir / "three_way_readers.png")
 
     print(f"\nN per cell: {set(v['n'] for v in agg.values())}")
     print(f"Total measured: {sum(v['n'] for v in agg.values())}")

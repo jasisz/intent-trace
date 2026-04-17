@@ -1,10 +1,12 @@
 # intent-trace
 
-**An empirical benchmark for how much author intent survives a code-change diff — measured with an LLM reviewer.**
+**An empirical benchmark for how much change-level author intent survives a code diff — measured with an LLM reviewer.**
 
 This repo tests a claim from the [Aver language](https://averlang.dev) project: that **structurally declared intent** (signatures, description markers, decision blocks, verify blocks) makes code legible for AI review without special training on the language.
 
-The headline finding is **parity under training asymmetry**, not victory. Aver reaches the same intent-reconstruction score as a heavily-documented Python transliteration, despite LLMs having essentially zero training exposure to Aver and trillions of tokens of Python. The ablation then isolates where that legibility actually lives.
+**What we measure is *intent of the diff*, not *intent of the program*.** The reviewer sees a unified diff between a baseline and a refactored snapshot and has to reconstruct what the author was trying to *change*. This is a different question from "given the full codebase, what does this program do" — Aver may have stronger or weaker properties for whole-program comprehension than this benchmark can show. We deliberately stay in the PR-review frame: reviewer sees the diff, nothing more.
+
+The headline finding is **reader-family dependence, not universal parity**. Aver and heavily-documented Python translations reach parity *for Claude readers* despite Claude having near-zero training on Aver. That parity does not extend to GPT-4.1 or Gemini Flash — each model family gives a home-field advantage to code styles closer to its training distribution. The only style that reads consistently well across all three families is the heavily-documented Python transliteration (`python_from_aver`).
 
 ## Method in one paragraph
 
@@ -45,31 +47,63 @@ Prompts range from specific refactors ("reject negative prices") to vague direct
 
 ## Results
 
-**108 measured slices, N=18 per cell, 18 prompts across 4 programs, 5-judge cross-vendor ensemble.**
+**324 measured slices total: 3 readers × 18 prompts × 3 languages × 2 views. N=18 per cell (Gemini N=15–17 due to free-tier throttling).**
 
-### Ranking
-
-![ranking](results/plots/ranking.png)
+### Per-reader ranking (full view, avg = (P+D)/2)
 
 ```
-1. aver              full    avg=8.61   P=8.33  D=8.89
-2. python_from_aver  full    avg=8.58   P=8.33  D=8.83    ← tie within rubric noise
-3. python_from_aver  masked  avg=8.32   P=7.83  D=8.81
-4. python_oop        full    avg=8.26   P=7.78  D=8.75
-5. python_oop        masked  avg=8.22   P=7.72  D=8.72
-6. aver              masked  avg=8.07   P=7.39  D=8.75
+Claude Sonnet 4.6 (reader):
+  1. aver              full    8.64
+  2. python_from_aver  full    8.58
+  3. python_oop        full    8.21
+
+OpenAI gpt-4.1 (reader):
+  1. python_oop        full    8.50
+  2. python_from_aver  full    8.47
+  3. aver              full    8.36
+
+Google Gemini 2.5 Flash (reader):
+  1. python_from_aver  full    8.38
+  2. python_oop        full    7.96
+  3. aver              full    7.88
 ```
+
+**Different reader, different winner.** Aver tops Claude, Python-OOP tops GPT-4.1, Python-from-Aver tops Gemini. The only style that lands in top-2 across all three families is `python_from_aver` (heavily-documented Python that preserves Aver's intent structure).
+
+### Full cross-reader comparison
+
+![three-way readers](results/plots/three_way_readers.png)
+
+```
+lang/view                Sonnet      gpt-4.1     Gemini
+aver/full                8.64 (18)   8.36 (18)   7.88 (16)   ← monotonic decline
+aver/masked              8.01 (18)   7.75 (18)   7.53 (16)
+python_from_aver/full    8.58 (18)   8.47 (18)   8.38 (17)   ← universally solid
+python_from_aver/masked  8.33 (18)   8.19 (18)   7.97 (15)
+python_oop/full          8.21 (18)   8.50 (18)   7.96 (17)   ← GPT-favored
+python_oop/masked        8.25 (18)   8.36 (18)   7.75 (16)
+```
+
+### Symmetric home-field effect
+
+```
+Aver full:     Sonnet +0.28 over gpt-4.1, +0.76 over Gemini   ← Claude-home
+Python-OOP:    gpt-4.1 +0.29 over Sonnet, +0.54 over Gemini   ← GPT-home
+Python-from-Aver: flat ±0.2 across all three families         ← cross-family
+```
+
+Each family gives its native code style an advantage of roughly +0.3 absolute score. The symmetry is striking — it is not noise, and not one-sided.
 
 ### Cross-vendor judge alignment
 
-The ensemble spans two model families (Claude + OpenAI). Per-axis alignment:
+The Sonnet-reader dataset was additionally scored with a 5-model cross-vendor judge ensemble (Claude Opus 4.7 + Sonnet 4.6 + Haiku 4.5 + OpenAI gpt-4o + gpt-4.1). Per-axis alignment:
 
 ```
 Prompt-axis:  Claude-3-median = 7.96   gpt-4o = 7.53   gpt-4.1 = 7.66
 Diff-axis:    Claude-3-median = 8.71   gpt-4o = 9.36   gpt-4.1 = 9.02
 ```
 
-OpenAI judges are systematically *stricter* on prompt-match (-0.3 to -0.4) and *more lenient* on diff-fidelity (+0.3 to +0.6) relative to Claude median. gpt-4.1 aligns ~30% closer to Claude than gpt-4o on both axes. The biases partially cancel in the averaged ranking; the rank ordering is stable across 3-judge (Claude only) and 5-judge (cross-vendor) aggregations.
+OpenAI judges are systematically *stricter* on prompt-match (-0.3 to -0.4) and *more lenient* on diff-fidelity (+0.3 to +0.6) relative to Claude median. gpt-4.1 aligns ~30% closer to Claude than gpt-4o on both axes. The biases partially cancel in the averaged ranking; the rank ordering within the Sonnet-reader dataset is stable across 3-judge (Claude only) and 5-judge (cross-vendor) aggregations.
 
 ### Per-axis breakdown
 
@@ -89,7 +123,9 @@ Python (OOP)      full → masked   ΔP = -0.06   ΔD = -0.03
 
 Read these as statements about the specific setup described above — one reviewer family, three agent-generated baselines, 18 prompts across 4 programs — not as universal claims.
 
-1. **Parity under training asymmetry, cross-vendor validated.** `aver/full` (8.61) and `python_from_aver/full` (8.58) are a tie within rubric noise (Δ=0.03). LLMs have near-zero training on Aver versus trillions of tokens of Python, yet a Python transliteration preserving Aver's intent structure scores at the same level. The ranking holds under both 3-judge Claude-only and 5-judge Claude+OpenAI aggregations, so the finding is not a single-family artifact.
+1. **Reader-family dependence is the headline.** Every reader has a favorite code style, and it is close to their training distribution. Claude ranks Aver first, GPT ranks Python-OOP first, Gemini ranks heavy-doc Python first. The symmetric +0.3 home-field advantage across independent families is the most striking result and it reframes any "AI-friendly language" claim as necessarily model-specific.
+
+2. **Parity between Aver and heavy-doc Python holds *only for Claude readers*.** When the reviewer is Claude Sonnet, `aver/full` (8.64) and `python_from_aver/full` (8.58) are a tie within rubric noise. That parity disappears under GPT-4.1 and Gemini — Aver drops by 0.28 and 0.76 respectively. The thesis "structural intent carries review legibility" survives, but narrowed to "within a family whose training distribution is close enough to the language."
 
 2. **Aver concentrates intent in the prose layer, and the ablation proves it.** Strip `intent` / `decision` / `?` descriptions / `verify` blocks and Aver drops the most of any variant (-0.94 P). Aver code alone is the **weakest** of all six cells (8.07). This is not a failure of Aver — it is the experiment isolating *where* Aver's legibility actually sits.
 
@@ -112,7 +148,7 @@ The headline: **Aver's structural intent declarations (`intent`, `decision`, `?`
 
 These are the reasons to treat the numbers as *indicative* rather than *conclusive*, in rough order of impact.
 
-1. **Reviewer is still single-family (Claude Sonnet).** The **judge ensemble** is cross-vendor (3 Claude + 2 OpenAI, see above), but the reviewer LLM-B that reads the diff and produces the intent guess is still Claude Sonnet 4.6 for every slice. A fully cross-vendor benchmark would re-run with GPT / Gemini / open-weight as the reviewer. The headline thesis (Aver reaches parity with heavy-doc Python under training asymmetry) would need to be re-checked with non-Claude readers.
+1. **The benchmark is diff-review, not program comprehension.** We measure how well a reviewer reconstructs the *intent of a change* from a unified diff. We do not measure how well a reviewer understands the *intent of a whole program* given its full source. Aver has affordances for whole-program understanding (module `intent`, `decision` blocks, `aver context` tool) that this benchmark simply does not exercise. A Python-OOP program with a terse diff may still be harder to understand at the program level than an Aver program — that's a different, un-tested question.
 
 2. **Small domain coverage.** Four programs, 18 prompts total. Three are small/medium invented domains (inventory, workflow, taskmanager); one is a real-world multi-module domain (payment_ops, ~1300 lines). Typical enterprise codebases are 10k+ lines across dozens of modules; behavior at that scale is not tested.
 

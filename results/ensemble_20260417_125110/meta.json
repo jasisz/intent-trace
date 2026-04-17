@@ -1,0 +1,51 @@
+{
+  "started": "2026-04-17T13:24:22",
+  "models": {
+    "b": "gpt-4.1",
+    "judges": {
+      "opus": "claude-opus-4-7",
+      "sonnet": "claude-sonnet-4-6",
+      "haiku": "claude-haiku-4-5-20251001"
+    }
+  },
+  "plan": [
+    {
+      "program": "inventory",
+      "prompts": [
+        "atomic_batch_operations",
+        "extract_reservation_module",
+        "make_harder_to_lose_stock",
+        "per_warehouse_reorder_points",
+        "track_expiration_dates"
+      ]
+    },
+    {
+      "program": "payment_ops",
+      "prompts": [
+        "add_multi_currency_support",
+        "atomic_batch_ingest",
+        "case_priority_levels",
+        "event_sourcing_rebuild"
+      ]
+    },
+    {
+      "program": "taskmanager",
+      "prompts": [
+        "add_priority",
+        "delegate_permissions",
+        "project_archival",
+        "task_dependencies"
+      ]
+    },
+    {
+      "program": "workflow",
+      "prompts": [
+        "add_withdraw_action",
+        "approval_expiration",
+        "categorize_rejection_reasons",
+        "multi_approver_chain",
+        "separate_audit_from_state"
+      ]
+    }
+  ]
+}
