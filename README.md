@@ -47,82 +47,122 @@ For each `(program, prompt, language, view)` cell, an agent applies the change r
 
 ### The three variants, side by side
 
-Same `approveReport` function in all three:
+Same `reserveStock` operation in all three — it has enough substance (multiple guards, state update, error-per-branch) to show where the variants diverge.
 
-**Aver** — explicit match on every status, prose + executable spec enforced by the language:
+**Aver** — `Result<T, E>` return, explicit `match` on each guard, every function carries a `? "..."` description, every function has a `verify` block acting as executable spec. The module carries `decision` blocks that `aver check` enforces:
 
 ```aver
-fn approveReport(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
-    ? "Moves a Submitted report to Approved. Approver must have sufficient authority."
-    match r.status
-        Status.Submitted -> approveIfAuthorized(r, approver, timestampMs)
-        Status.Draft -> Result.Err("Cannot approve a Draft report")
-        Status.Approved -> Result.Err("Report already approved")
-        Status.Rejected -> Result.Err("Report was rejected")
-        Status.Paid -> Result.Err("Report already paid")
+module Inventory
+    intent =
+        "Multi-warehouse inventory with per-SKU stock levels, reservations, and reorder policy."
+        "Separates available stock from reserved stock so that pending orders do not silently"
+        "over-commit. Operations return Result to make failure modes explicit."
 
-verify approveReport
-    approveReport(emptyReport("R1", "U1"), User(id="M", name="M", approvalLimitCents=100000), 3000)
-        => Result.Err("Cannot approve a Draft report")
-    approveReport(sampleSubmitted("R1", "U1"), User(id="M", name="M", approvalLimitCents=100000), 3000)
-        => Result.Ok(applyApprove(sampleSubmitted("R1", "U1"), User(id="M", name="M", approvalLimitCents=100000), 3000))
+decision SeparateAvailableAndReserved
+    date = "2026-04-16"
+    reason =
+        "Reserved stock represents orders that have been accepted but not yet shipped."
+        "Collapsing reserved into available would allow a second reservation to over-commit"
+        "the same physical units. Tracking them separately makes the invariant reserved <= onHand"
+        "checkable at any point."
+    chosen = "SplitAvailableReserved"
+    rejected = ["SingleAvailableCounter", "NegativeAvailableAsReserved"]
+    impacts = [reserveStock, fulfillReservation, releaseReservation, availableStock]
+
+decision ResultOverException
+    date = "2026-04-16"
+    reason =
+        "Invalid operations (unknown warehouse, negative qty, over-reserve) are expected"
+        "at runtime — clients need to branch on them. Errors-as-values keep every call site"
+        "obvious about what can fail."
+    chosen = "ResultReturns"
+    rejected = ["ExceptionsOrPanics", "SilentNoop"]
+    impacts = [receiveShipment, reserveStock, releaseReservation, fulfillReservation, rebalance]
+
+fn reserveIfAvailable(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Reserves qty if available (onHand - reserved) is sufficient."
+    lvl = getLevel(inv, warehouseId, skuId)
+    available = lvl.onHand - lvl.reserved
+    match qty <= available
+        false -> Result.Err("Insufficient available stock: need {qty}, have {available}")
+        true -> Result.Ok(applyReserve(inv, warehouseId, skuId, qty))
+
+fn reserveStock(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Reserves qty for an order. Fails if qty would exceed available (onHand - reserved)."
+    match qty <= 0
+        true -> Result.Err("Reserve qty must be positive")
+        false -> reserveStockChecked(inv, warehouseId, skuId, qty)
+
+verify reserveStock
+    reserveStock(sampleInventory(), "W1", "S1", 0) => Result.Err("Reserve qty must be positive")
+    reserveStock(emptyInventory(), "W1", "S1", 3) => Result.Err("Unknown warehouse: W1")
+    reserveStock(sampleInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(sampleInventory(), "W1", "S1", 3))
 ```
 
-**Aver-in-Python** (`python_from_aver`) — what a faithful Aver-in-Python translation should look like. Result-as-value (not exceptions), explicit `match` on every status branch, full intent docstring carrying what would be a `?` description plus rationale, and design decisions mirrored from the Aver `decision` blocks:
+**Aver-in-Python** (`python_from_aver`) — same intent structure, Python as carrier. Free functions over frozen dataclasses (not classes with mutation). Design decisions and function descriptions moved to docstrings. `raise ValueError` instead of Result — that's where the current pfa baseline diverges from a strict Aver translation; a strict version would use a Result dataclass. The prose is here by convention, not enforcement:
 
 ```python
-@dataclass(frozen=True)
-class Ok: value: Report
-@dataclass(frozen=True)
-class Err: message: str
-Result = Union[Ok, Err]
+"""Multi-warehouse inventory with per-SKU stock levels, reservations, and reorder policy.
 
-def approve_report(r: Report, approver: User, timestamp_ms: int) -> Result:
-    """Move a Submitted report to Approved. Approver must have sufficient authority.
+Design decisions:
 
-    Matches on r.status. Returns an Err with a specific message for each
-    non-Submitted branch (Draft / Approved / Rejected / Paid). On Submitted,
-    checks approver authority against amount; returns Err if limit too low,
-    otherwise Ok with status transitioned and an "approved" event appended.
-    Errors-as-values, not exceptions — so every call site is forced to
-    branch on the outcome explicitly.
-    """
-    match r.status:
-        case Status.SUBMITTED:
-            if not _approver_has_authority(approver, r.amount):
-                return Err(f"Approver {approver.id} limit too low for amount")
-            approved = replace(r, status=Status.APPROVED)
-            return Ok(_record_event(approved, Event(
-                timestamp_ms=timestamp_ms, actor_id=approver.id, note="approved")))
-        case Status.DRAFT: return Err("Cannot approve a Draft report")
-        case Status.APPROVED: return Err("Report already approved")
-        case Status.REJECTED: return Err("Report was rejected")
-        case Status.PAID: return Err("Report already paid")
+* Available and reserved stock are tracked separately. Reserved stock represents
+  orders that have been accepted but not yet shipped; collapsing it into
+  available would allow a second reservation to over-commit the same physical
+  units. Alternatives considered: single available counter, negative-available
+  as reserved.
+
+* Operations return via raise/early-return rather than silent no-op. Invalid
+  operations (unknown warehouse, non-positive qty, over-reserve) are expected
+  at runtime and callers need to branch on them. A strict Aver-in-Python
+  translation would use a Result sum type; this baseline uses exceptions as a
+  Python-idiomatic approximation.
+"""
+
+def reserve_stock(inv: Inventory, warehouse_id: str, sku_id: str, qty: int) -> Inventory:
+    """Reserve qty for an order. Raises if qty would exceed available."""
+    if qty <= 0:
+        raise ValueError("Reserve qty must be positive")
+    if not known_warehouse(inv, warehouse_id):
+        raise ValueError(f"Unknown warehouse: {warehouse_id}")
+    if not known_sku(inv, sku_id):
+        raise ValueError(f"Unknown sku: {sku_id}")
+    lvl = get_level(inv, warehouse_id, sku_id)
+    avail = lvl.on_hand - lvl.reserved
+    if qty > avail:
+        raise ValueError(f"Insufficient available stock: need {qty}, have {avail}")
+    return set_level(inv, warehouse_id, sku_id, StockLevel(on_hand=lvl.on_hand, reserved=lvl.reserved + qty))
 ```
 
-(Full disclosure: the actual `python_from_aver` baseline in this benchmark is a *loose* transliteration — it uses `raise ValueError` instead of Result types and shorter docstrings than this ideal form. So the benchmark measures "loose Aver-in-Python vs Aver"; tightening the transliteration is an open follow-up that would probably push pfa closer to Aver, not further. **Not enforced either way** — no tooling complains if someone strips the docstring, unlike `aver check`.)
-
-**Idiomatic Python** (`python_oop`) — classes with mutation, typed exception hierarchy, `is_submitted` property. Reasoning about the state machine is implicit in the `is_submitted` check and the exception classes; it is not laid out as enumerated branches:
+**Idiomatic Python** (`python_oop`) — classes with mutation, typed exception hierarchy (`UnknownWarehouseError`, `NonPositiveQtyError`, `InsufficientStockError`, ...), private `_require_*` helpers. Design rationale ("separated available/reserved", "errors as values vs exceptions") is **not stated anywhere** — a reviewer has to infer it from the shape of the class, the names of the exception classes, and seeing that `reserved` is a separate attribute from `on_hand`:
 
 ```python
-def approve(self, approver: User, timestamp_ms: int) -> None:
-    """Move a Submitted report to Approved; approver must have sufficient authority."""
-    if not self.is_submitted:
-        raise InvalidTransitionError(
-            f"Cannot approve from status {self.status.value}"
-        )
-    if not approver.can_approve(self.amount):
-        raise InsufficientAuthorityError(
-            f"Approver {approver.id} limit too low for amount"
-        )
-    self.status = Status.APPROVED
+class UnknownWarehouseError(InventoryError):
+    def __init__(self, warehouse_id: str) -> None:
+        super().__init__(f"Unknown warehouse: {warehouse_id}")
+        self.warehouse_id = warehouse_id
+
+
+class InsufficientStockError(InventoryError):
+    def __init__(self, needed: int, have: int, *, at: str | None = None) -> None: ...
+
+
+class Inventory:
+    def reserve(self, warehouse_id: str, sku_id: str, qty: int) -> None:
+        """Reserve qty against available stock; fails if it would over-commit."""
+        if qty <= 0:
+            raise NonPositiveQtyError("Reserve")
+        self._require_warehouse(warehouse_id)
+        self._require_sku(sku_id)
+        lvl = self._mutable_level(warehouse_id, sku_id)
+        if qty > lvl.available:
+            raise InsufficientStockError(qty, lvl.available)
+        lvl.reserved += qty
 ```
 
-What the three share: same state machine, same guard logic, same approver-authority check. What they differ on:
-- **Enumerated match vs early-return**: Aver and Aver-in-Python make every status branch visible at the call site; python_oop abstracts it behind `is_submitted`.
-- **Immutable Result vs mutation + exceptions**: Aver/pfa return a new Report; python_oop mutates `self.status`.
-- **Prose enforcement**: Aver requires prose to pass `aver check`; pfa has the prose as convention; python_oop keeps only a one-line docstring (no rationale, no verify examples).
-- **Module-level `decision` blocks**: Aver declares `StatesAsClosedVariant` and `AuditTrailInline` at the top of the module, explaining *why* this state machine is a closed sum type and why events live inline. pfa mirrors this in the module docstring. python_oop has nothing at that level — the design rationale has to be reconstructed by the reader from the code shape.
+What the three share: same guard sequence (positive qty → known warehouse → known sku → sufficient availability), same final state change.
+
+Where they diverge is the **intent surface area**. Aver lays every design choice out in prose that `aver check` enforces (module `intent`, two `decision` blocks, `? "..."` on every function, `verify` blocks with executable examples). Aver-in-Python carries the same reasoning as docstrings — same information, language-level enforcement replaced by convention. Idiomatic OOP Python abstracts the same reasoning into code structure (separate `reserved` attribute, dedicated exception classes, class invariants) without stating it: a reviewer reconstructs it by reading the shape, not the prose. That is precisely what the benchmark measures — how far each of these three surfaces gets an LLM reviewer when reconstructing intent from a diff.
 
 **Baseline inconsistency in v1 — addressed in v2 canonical rerun.** The two Python baselines originally drifted across programs (the table below shows v1 state, before canonical rewrite). In v2, all `python_from_aver` files carry matching "Design decisions:" docstrings and complete helper docs; all Aver files pass `aver check` with full `verify` coverage. `python_oop` was left unchanged as an idiomatic-Python control. Headline findings held after v2 rerun. Density per file (v1):
 
