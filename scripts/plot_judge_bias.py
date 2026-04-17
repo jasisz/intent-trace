@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -121,23 +121,23 @@ def judges_3v5_comparison(out_path: Path) -> None:
         rows = [r for r in load_rows(path) if r.get("view") == "full"]
         three = defaultdict(list)
         five = defaultdict(list)
+        # Match the benchmark's aggregation: median per axis across the judge panel,
+        # then (P+D)/2 per slice. That's what the run_all.py ensemble writes and what
+        # the README / other plots cite.
         for r in rows:
-            claude_scores = []
-            for j in CLAUDE:
-                p = r["judgment_prompt"]["individual"].get(j, {}).get("score", -1)
-                d = r["judgment_diff"]["individual"].get(j, {}).get("score", -1)
-                if p >= 0 and d >= 0:
-                    claude_scores.append((p + d) / 2)
-            all_scores = list(claude_scores)
-            for j in GPT:
-                p = r["judgment_prompt"]["individual"].get(j, {}).get("score", -1)
-                d = r["judgment_diff"]["individual"].get(j, {}).get("score", -1)
-                if p >= 0 and d >= 0:
-                    all_scores.append((p + d) / 2)
-            if claude_scores:
-                three[r["lang"]].append(mean(claude_scores))
-            if all_scores:
-                five[r["lang"]].append(mean(all_scores))
+            def axis_scores(panel, axis):
+                vals = [r[axis]["individual"].get(j, {}).get("score", -1) for j in panel]
+                return [v for v in vals if v >= 0]
+
+            p_c = axis_scores(CLAUDE, "judgment_prompt")
+            d_c = axis_scores(CLAUDE, "judgment_diff")
+            if p_c and d_c:
+                three[r["lang"]].append((median(p_c) + median(d_c)) / 2)
+
+            p_all = axis_scores(CLAUDE + GPT, "judgment_prompt")
+            d_all = axis_scores(CLAUDE + GPT, "judgment_diff")
+            if p_all and d_all:
+                five[r["lang"]].append((median(p_all) + median(d_all)) / 2)
 
         langs = LANGS
         x = np.arange(len(langs))
@@ -154,10 +154,13 @@ def judges_3v5_comparison(out_path: Path) -> None:
                 ax.text(bar.get_x() + bar.get_width() / 2, v + 0.04, f"{v:.2f}",
                         ha="center", va="bottom", fontsize=8, color=SLATE)
 
-        # Highlight ranking change: circle the new winner
+        # Callout only on a real reversal: different winner AND the new winner's
+        # score jumped by ≥0.10 between 3-judge and 5-judge (i.e. GPT judges
+        # meaningfully lifted it, not just tiny noise shuffling).
         top_five = int(np.argmax(five_vals))
         top_three = int(np.argmax(three_vals))
-        if top_five != top_three:
+        winner_lift = five_vals[top_five] - three_vals[top_five]
+        if top_five != top_three and winner_lift >= 0.10:
             ax.annotate("ranking reversal", xy=(top_five + w / 2, five_vals[top_five]),
                         xytext=(top_five, max(five_vals) + 0.25),
                         fontsize=9, fontweight="bold", color=AMBER_DARK, ha="center",
