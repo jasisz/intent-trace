@@ -14,7 +14,7 @@ Headline findings (differences are mostly 0.01–0.20; rubric noise ~0.3 per cel
 
 3. **On `payment_ops` (1300-line multi-module), pfa beats Aver by 0.57 on architectural refactors (+0.71) more than on additive (+0.44).** `python_oop` drops to 7.75 on those same prompts (below Aver 7.92) — heavy docstrings, not Python itself, survive architectural diffs at scale. Gap held after v2 canonical rewrite (not a baseline artifact).
 
-**v2 canonical rerun.** All Aver files pass `aver check`; all pfa files carry matching "Design decisions:" sections and complete docstrings. python_oop unmodified (control). python_oop v2−v1 = exactly 0.00 on every cell — rubric reproducibility sanity check.
+**v2 canonical rerun.** All Aver files pass `aver check`; all pfa files carry matching "Design decisions:" sections and complete docstrings. python_oop code was not touched, so only aver + pfa were rerun — python_oop rows are the v1 results carried over unchanged.
 
 **What this benchmark measures.** How well an LLM reviewer reconstructs the intent of a change from a unified diff — nothing about whole-program comprehension, production readability, or human-in-the-loop review.
 
@@ -260,7 +260,7 @@ These are split into **scope** (what this benchmark does and doesn't measure —
 
 ### Validity threats — reasons the measured numbers may be wrong
 
-1. **Baseline inconsistency across programs — addressed in v2 canonical rerun.** pfa originally drifted (snake_case / camelCase mixed, docstring density 50–93%) and Aver before-files were missing `verify` coverage. v2 rewrote everything to canonical (Aver passes `aver check`, pfa has matching Design decisions + complete docstrings). python_oop unchanged as control — its v2 scores are exactly equal to v1 (sanity check). Headline #2 survived. Residual confound: docstring volume vs format (open follow-up: pfa trimmed to Aver-prose-volume).
+1. **Baseline inconsistency across programs — addressed in v2 canonical rerun.** pfa originally drifted (snake_case / camelCase mixed, docstring density 50–93%) and Aver before-files were missing `verify` coverage. v2 rewrote everything to canonical (Aver passes `aver check`, pfa has matching Design decisions + complete docstrings) and rerun only aver + pfa (python_oop code unchanged, so its v1 rows were carried over — no rerun). Headline #2 survived. Residual confound: docstring volume vs format (open follow-up: pfa trimmed to Aver-prose-volume).
 
 2. **N=18 per cell is small.** Rubric noise ~0.3 per cell, per-cell gaps often in 0.01–0.20. None of these differences are statistically strong except the 0.71 payment_ops architectural gap. Bootstrap CIs on the ranking chart make this visible.
 
@@ -333,7 +333,7 @@ results/merged/<reader>.jsonl                # canonical per-reader dataset (ded
 
 ## Status
 
-Dataset is complete (v2 canonical rerun): 3 readers × 162 slices × 5 judges × 2 axes = 4860 judgments. N=18 per `(lang, view)` cell on every reader. Findings above are stable under ensemble noise (~1 point spread on prompt-axis, 0–1 on diff-axis). python_oop rows are preserved from v1 as a control (code not touched by canonical rewrite) — their v2 deltas of exactly 0.00 on every cell confirm the rubric's within-run reproducibility. PRs welcome to add languages, models, or programs.
+Dataset is complete (v2 canonical rerun): 3 readers × 162 slices × 5 judges × 2 axes = 4860 judgments. N=18 per `(lang, view)` cell on every reader. python_oop rows are v1 carried over (code was not touched by canonical rewrite — only aver + pfa were rerun). Findings above are stable under ensemble noise (~1 point spread on prompt-axis, 0–1 on diff-axis). PRs welcome to add languages, models, or programs.
 
 ## License
 
