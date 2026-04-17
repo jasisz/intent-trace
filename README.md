@@ -2,7 +2,9 @@
 
 **An empirical benchmark for how much author intent survives a code-change diff — measured with an LLM reviewer.**
 
-This repo tests a claim from the [Aver language](https://averlang.dev) project: that **structurally declared intent** (signatures, description markers, decision blocks, verify blocks) makes code legible for AI review without special training on the language. The benchmark compares Aver against two Python styles on the same change requests.
+This repo tests a claim from the [Aver language](https://averlang.dev) project: that **structurally declared intent** (signatures, description markers, decision blocks, verify blocks) makes code legible for AI review without special training on the language.
+
+The headline finding is **parity under training asymmetry**, not victory. Aver reaches the same intent-reconstruction score as a heavily-documented Python transliteration, despite LLMs having essentially zero training exposure to Aver and trillions of tokens of Python. The ablation then isolates where that legibility actually lives.
 
 ## Method in one paragraph
 
@@ -25,10 +27,10 @@ For each `(program, prompt, language, view)` cell, an agent applies the change r
 ### Three language variants
 
 - **aver** — the original.
-- **python_from_aver** — a Python translation of the same programs with one-to-one preservation of Aver idioms (frozen dataclasses, pure functions, `replace()` for updates, camelCase names, heavy docstrings lifted from Aver's `?` descriptions).
-- **python_oop** — an independent OOP Python design of the same programs (classes with methods, mutation where natural, snake_case, typed exception hierarchy, **sparse** ~30–40% docstring coverage — classical idiomatic Python).
+- **python_from_aver** — **an intentionally non-idiomatic transliteration baseline.** It is Python syntax carrying Aver-style affordances: frozen dataclasses, pure functions, `replace()`-based updates, camelCase names, small composable helpers, and heavy docstrings lifted from Aver's `?` descriptions. Its purpose is *not* to model typical Python — it is to isolate how much review legibility comes from the carrier language versus the preserved intent structure. Treating it as "what a Python dev would write" is a misreading.
+- **python_oop** — an independent OOP Python design of the same programs (classes with methods, mutation where natural, snake_case, typed exception hierarchy, **sparse** ~30–40% docstring coverage — classical idiomatic Python, the "Python a Python dev would actually write" target).
 
-Both Python variants cover the same domains as the Aver version and their smoke tests pass independently.
+Both Python variants cover the same domains as the Aver version and their smoke tests pass independently. The three variants give a triangulation: language idiom × prose density × structural decomposition.
 
 ## Programs
 
@@ -74,18 +76,20 @@ Python (OOP)      full → masked   ΔP = +0.05   ΔD = +0.03
 
 ## Findings
 
-1. **Aver reaches parity with heavily-documented Python on AI-reviewed code intent** — despite LLMs having effectively zero training exposure to Aver and trillions of tokens of Python. `aver/full` (8.64) vs `python_from_aver/full` (8.58) is a tie within rubric noise. The artifact carries intent; the model doesn't recall it from priors.
+Read these as statements about the specific setup described above — one reviewer family, three agent-generated baselines, 18 prompts across 4 programs — not as universal claims.
 
-2. **Aver concentrates intent in the prose layer.** Strip `intent` / `decision` / `?` descriptions / `verify` blocks and Aver drops the most of any variant (-1.11 P). Aver code alone is the **weakest** carrier — lowest ranked cell of all six (8.01).
+1. **Parity under training asymmetry.** `aver/full` (8.64) and `python_from_aver/full` (8.58) are a tie within rubric noise. LLMs have near-zero training on Aver versus trillions of tokens of Python, yet a Python transliteration preserving Aver's intent structure scores at the same level. This says more about where the signal lives (in the structure) than about which language wins.
 
-3. **Python-from-Aver (heavy docstrings) is the most robust to ablation** in absolute terms — still lands at 8.33 masked. Prose layer in Python codebases translated from Aver inherits a dense intent narrative that survives partial degradation.
+2. **Aver concentrates intent in the prose layer, and the ablation proves it.** Strip `intent` / `decision` / `?` descriptions / `verify` blocks and Aver drops the most of any variant (-1.11 P). Aver code alone is the **weakest** of all six cells (8.01). This is not a failure of Aver — it is the experiment isolating *where* Aver's legibility actually sits.
 
-4. **Typical Python-OOP (sparse docstrings) is the baseline non-magic signal.** Full and masked both ~8.2. No prose to lose; code-only signal dominates. This is what most real Python codebases look like.
+3. **The transliteration baseline (`python_from_aver`) is the most ablation-robust** in absolute terms (8.33 masked). That's the expected behavior of a baseline designed to preserve intent structure across a language change.
+
+4. **Idiomatic Python-OOP (sparse docstrings) is the "typical codebase" baseline.** Full and masked both ~8.2 — stable, slightly below the prose-heavy variants. No prose to lose; what you see in the code is what you get. This is what most real Python codebases look like.
 
 5. **Ablation asymmetry reveals what each prose style actually transmits:**
    - **Aver prose** → *prompt-match precision* (P drops 1.11, D barely moves)
    - **Python-from-Aver docstrings** → *balanced carrier* (both P and D drop ~0.3–0.4)
-   - **Python-OOP sparse docs** → *redundant ornament* (no measurable drop)
+   - **Python-OOP sparse docs** → *redundant ornament on code-level signal* (no measurable drop)
 
 ## Why this experiment even exists
 
@@ -93,14 +97,21 @@ Python (OOP)      full → masked   ΔP = +0.05   ΔD = +0.03
 
 The headline: **Aver's structural intent declarations (`intent`, `decision`, `?`, `verify`) are a functional equivalent for Python's heavy docstring tradition, from the perspective of an AI review.** Not better; equally legible. What makes this interesting is that the equivalence holds despite Aver having essentially zero training presence.
 
-## Limitations
+## Threats to validity
 
-- **Only one model family (Claude).** A full validation would need cross-family readers (GPT, Gemini, open-weight) — *this may shift absolute scores and equalize training asymmetry*.
-- **Four programs, 18 prompts.** Covers three small/medium codebases plus one real-world multi-module domain. Wider domain coverage would strengthen generalization.
-- **Agent-produced refactors, not human commits.** Real open-source commits would reduce construct bias but require domain-matched Aver corpora that don't yet exist.
-- **Ensemble judge is three Claude models** (Opus/Sonnet/Haiku). Inter-rater agreement is high (~90–95% at ±1 point) but this is within-family and could correlate.
-- **Programs are relatively small compared to enterprise codebases.** Behavior may differ at 10k+ line scales.
-- **`aver context` tool was tested and removed.** We initially ran an `aver_context` view (diffing compressed intent summaries) but concluded the setup was synthetic — `aver context` is a state-projection tool, not a change-representation tool, and diffing two projections doesn't match how reviewers actually use the tool. Scores collapsed in complex multi-module code for structural (not legibility) reasons. Code path dropped.
+These are the reasons to treat the numbers as *indicative* rather than *conclusive*, in rough order of impact.
+
+1. **Single model family (Anthropic).** The reviewer is Claude Sonnet 4.6, the ensemble judges are Claude Opus 4.7 + Sonnet 4.6 + Haiku 4.5, and the additional cross-judge parafraze run also stays inside the Anthropic family. Inter-rater agreement is high (~90–95% at ±1 point), but that agreement is within-family and could correlate. A family lock-in study is **not** a cross-vendor benchmark — conclusions about "AI reviewers" generalize only to this family until a GPT / Gemini / open-weight reader is added.
+
+2. **Small domain coverage.** Four programs, 18 prompts total. Three are small/medium invented domains (inventory, workflow, taskmanager); one is a real-world multi-module domain (payment_ops, ~1300 lines). Typical enterprise codebases are 10k+ lines across dozens of modules; behavior at that scale is not tested.
+
+3. **Agent-produced refactors, not human commits.** Both the baselines and the refactors were generated by sub-agents (Claude Code) applying the change requests. Real open-source commits from human developers would reduce construct bias, but require domain-matched Aver corpora that don't yet exist (Aver is a new language).
+
+4. **`python_from_aver` is a transliteration baseline, not typical Python** (see above). Any reader who treats it as "what a Python dev would write" will over-read the Aver-vs-Python framing. The intended comparison is three-way (`aver` / `python_from_aver` / `python_oop`), not binary.
+
+5. **Rubric is an LLM judging another LLM.** The 0–10 score is itself a model output, not ground truth. The score captures what a Claude-family reviewer can reconstruct; it does not capture what a human reviewer would reconstruct. We tested replication on the same data (100% match with stochastic rerun, lower with paraphrased rubric) but did not include human raters.
+
+6. **`aver context` tool was tested and removed.** We initially ran an `aver_context` view (diffing compressed intent summaries) but concluded the setup was synthetic — `aver context` is a state-projection tool, not a change-representation tool, and diffing two projections doesn't match how reviewers actually use the tool. Scores collapsed in complex multi-module code for structural (not legibility) reasons. Code path dropped; historical JSONL entries from that view are not included in the headline numbers.
 
 ## Reproduce
 
