@@ -19,14 +19,11 @@ import numpy as np
 
 AMBER = "#d97706"
 AMBER_LIGHT = "#f59e0b"
+AMBER_DARK = "#92400e"
 SLATE = "#1e293b"
 SLATE_MUTED = "#64748b"
 SLATE_LIGHT = "#e2e8f0"
 BG = "#f8fafc"
-BLUE = "#2563eb"
-GREEN = "#16a34a"
-RED = "#dc2626"
-PURPLE = "#7c3aed"
 
 mpl.rcParams.update({
     "font.family": ["Helvetica Neue", "Arial", "sans-serif"],
@@ -163,8 +160,8 @@ def judges_3v5_comparison(out_path: Path) -> None:
         if top_five != top_three:
             ax.annotate("ranking reversal", xy=(top_five + w / 2, five_vals[top_five]),
                         xytext=(top_five, max(five_vals) + 0.25),
-                        fontsize=9, fontweight="bold", color=RED, ha="center",
-                        arrowprops=dict(arrowstyle="->", color=RED, lw=1.2))
+                        fontsize=9, fontweight="bold", color=AMBER_DARK, ha="center",
+                        arrowprops=dict(arrowstyle="->", color=AMBER_DARK, lw=1.2))
 
         ax.set_xticks(x)
         ax.set_xticklabels([LANG_LABELS[l] for l in langs], rotation=12, ha="right", fontsize=9)
@@ -218,17 +215,17 @@ def judge_family_x_lang(out_path: Path) -> None:
     w = 0.4
     b1 = ax.bar(x - w / 2, claude_vals, w, color=SLATE, edgecolor=SLATE, linewidth=1.0,
                 label="Claude-3 judges mean")
-    b2 = ax.bar(x + w / 2, gpt_vals, w, color=BLUE, edgecolor=SLATE, linewidth=1.0,
+    b2 = ax.bar(x + w / 2, gpt_vals, w, color=AMBER, edgecolor=SLATE, linewidth=1.0,
                 label="OpenAI-2 judges mean")
     for bars, vals in ((b1, claude_vals), (b2, gpt_vals)):
         for bar, v in zip(bars, vals):
             ax.text(bar.get_x() + bar.get_width() / 2, v + 0.04, f"{v:.2f}",
                     ha="center", va="bottom", fontsize=8, color=SLATE)
 
-    # Δ annotations per pair
+    # Δ annotations per pair (amber intensity scales with effect size)
     for i, (c, g) in enumerate(zip(claude_vals, gpt_vals)):
         delta = g - c
-        color = GREEN if delta > 0.15 else (AMBER if delta > 0.05 else SLATE_MUTED)
+        color = AMBER_DARK if delta > 0.15 else (AMBER if delta > 0.05 else SLATE_MUTED)
         ax.annotate(f"Δ {delta:+.2f}", xy=(i, max(c, g) + 0.22), ha="center",
                     fontsize=9, fontweight="bold", color=color)
 
@@ -280,9 +277,9 @@ def ablation_all_readers(out_path: Path) -> None:
         for bar, v in zip(b2, mask_vals):
             ax.text(bar.get_x() + bar.get_width() / 2, v + 0.05, f"{v:.2f}",
                     ha="center", va="bottom", fontsize=8, color=SLATE)
-        # Delta below each pair
+        # Delta below each pair (amber intensity = drop size)
         for i, d in enumerate(deltas):
-            color = RED if d < -0.3 else (AMBER if d < -0.1 else GREEN)
+            color = AMBER_DARK if d < -0.3 else (AMBER if d < -0.1 else SLATE_MUTED)
             ax.text(i, 7.05, f"Δ {d:+.2f}", ha="center", va="bottom",
                     fontsize=9, fontweight="bold", color=color)
 
@@ -392,10 +389,16 @@ def program_complexity_advantage(out_path: Path) -> None:
                 linewidth=1.0, label="Aver − Python (OOP)")
     b2 = ax.bar(x + w / 2, aver_advantage_vs_pfa, w, color=SLATE_MUTED, edgecolor=SLATE,
                 linewidth=1.0, label="Aver − Python (from Aver)")
+    # Amber = Aver wins, Slate = Python wins, Slate-muted = tie
     for bars, vals in ((b1, aver_advantage_vs_oop), (b2, aver_advantage_vs_pfa)):
         for bar, v in zip(bars, vals):
             y = v + (0.03 if v >= 0 else -0.08)
-            color = GREEN if v > 0.1 else (RED if v < -0.1 else SLATE_MUTED)
+            if v > 0.1:
+                color = AMBER_DARK
+            elif v < -0.1:
+                color = SLATE
+            else:
+                color = SLATE_MUTED
             ax.text(bar.get_x() + bar.get_width() / 2, y, f"{v:+.2f}",
                     ha="center", va="bottom" if v >= 0 else "top",
                     fontsize=9, fontweight="bold", color=color)
