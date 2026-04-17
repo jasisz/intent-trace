@@ -8,7 +8,7 @@ This repo tests a claim from the [Aver language](https://averlang.dev) project: 
 
 Headline findings (differences are mostly 0.01–0.20; rubric noise ~0.3 per cell):
 
-1. **Aver ≈ Aver-in-Python on every reader.** `python_from_aver` is a faithful transliteration of Aver (same intent structure, Python as carrier). On Sonnet the gap is 0.01, on gpt-4.1 it's 0.10 (pfa leading), on Gemini 0.23 — all within noise. Idiomatic `python_oop` sits 0.16–0.34 below. Interpretation: intent structure carries legibility; Python's training priors give a hair of directional edge when structure is held constant.
+1. **Aver ≈ Aver-in-Python on every reader.** `python_from_aver` (shortened to `pfa` throughout) is a faithful transliteration of Aver — same intent structure, Python as carrier. On Sonnet the gap is 0.01, on gpt-4.1 it's 0.10 (pfa leading), on Gemini 0.23 — all within noise. Idiomatic `python_oop` sits 0.16–0.34 below. Interpretation: intent structure carries legibility; Python's training priors give a hair of directional edge when structure is held constant.
 
 2. **Aver's narrative prose (`intent` / `decision` / `?`) does the work — not `verify`.** Stripping prose makes `aver/masked` the lowest cell on every reader. The follow-up `masked_spec` ablation (strip narrative, keep `verify`) shifts Aver only by +0.02 / −0.05 / −0.21 — inside noise. Verify is spec, not review-time doc.
 
