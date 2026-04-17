@@ -42,8 +42,66 @@ For each `(program, prompt, language, view)` cell, an agent applies the change r
 ### Three language variants
 
 - **aver** — the original.
-- **python_from_aver** — **an intentionally non-idiomatic transliteration baseline.** Python syntax carrying Aver-style affordances: frozen dataclasses, pure functions, `replace()`-based updates, small composable helpers, and docstrings carrying what would be `?` descriptions in Aver. Its purpose is *not* to model typical Python — it is to isolate how much review legibility comes from the carrier language versus the preserved intent structure.
+- **python_from_aver** — **Aver written in Python.** Same intent structure, same decision decomposition, same function boundaries — just Python syntax as carrier. Frozen dataclasses instead of `record`, pure functions, `replace()`-based updates, docstrings carrying what would be `?` descriptions in Aver, module-level "Design decisions:" sections mirroring Aver `decision` blocks, `assert` where Aver has `verify`. **Crucially: in Aver the prose layer is compiler-enforced (`aver check` fails if `verify` / `intent` coverage is incomplete); in `python_from_aver` the same structure is convention — a maintainer could let it drift and Python wouldn't complain.** The benchmark measures a snapshot where both variants carry matching prose; long-term maintenance under enforcement vs convention is a different question this benchmark doesn't test.
 - **python_oop** — an OOP Python design of the same programs (classes with methods, mutation where natural, typed exception hierarchy). Intended as "the Python a Python dev would actually write."
+
+### The three variants, side by side
+
+Same `approveReport` function in all three:
+
+**Aver** — explicit match on every status, prose + executable spec enforced by the language:
+
+```aver
+fn approveReport(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
+    ? "Moves a Submitted report to Approved. Approver must have sufficient authority."
+    match r.status
+        Status.Submitted -> approveIfAuthorized(r, approver, timestampMs)
+        Status.Draft -> Result.Err("Cannot approve a Draft report")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report was rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+verify approveReport
+    approveReport(emptyReport("R1", "U1"), User(id="M", name="M", approvalLimitCents=100000), 3000)
+        => Result.Err("Cannot approve a Draft report")
+    approveReport(sampleSubmitted("R1", "U1"), User(id="M", name="M", approvalLimitCents=100000), 3000)
+        => Result.Ok(applyApprove(sampleSubmitted("R1", "U1"), User(id="M", name="M", approvalLimitCents=100000), 3000))
+```
+
+**Aver-in-Python** (`python_from_aver`) — same intent, Python syntax. Result→raise, prose→docstring, verify→pipeline via assert/smoke tests. **Not enforced** — no tooling complains if someone strips the docstring:
+
+```python
+def approve_report(r: Report, approver: User, timestamp_ms: int) -> Report:
+    """Move a Submitted report to Approved. Approver must have sufficient authority."""
+    if r.status is not Status.SUBMITTED:
+        raise ValueError(f"Cannot approve from status {r.status.value}")
+    if not _approver_has_authority(approver, r.amount):
+        raise ValueError(f"Approver {approver.id} limit too low for amount")
+    approved = replace(r, status=Status.APPROVED)
+    return _record_event(approved, Event(timestamp_ms=timestamp_ms, actor_id=approver.id, note="approved"))
+```
+
+**Idiomatic Python** (`python_oop`) — classes with mutation, typed exception hierarchy, `is_submitted` property. Reasoning about the state machine is implicit in the `is_submitted` check and the exception classes; it is not laid out as enumerated branches:
+
+```python
+def approve(self, approver: User, timestamp_ms: int) -> None:
+    """Move a Submitted report to Approved; approver must have sufficient authority."""
+    if not self.is_submitted:
+        raise InvalidTransitionError(
+            f"Cannot approve from status {self.status.value}"
+        )
+    if not approver.can_approve(self.amount):
+        raise InsufficientAuthorityError(
+            f"Approver {approver.id} limit too low for amount"
+        )
+    self.status = Status.APPROVED
+```
+
+What the three share: same state machine, same guard logic, same approver-authority check. What they differ on:
+- **Enumerated match vs early-return**: Aver and Aver-in-Python make every status branch visible at the call site; python_oop abstracts it behind `is_submitted`.
+- **Immutable Result vs mutation + exceptions**: Aver/pfa return a new Report; python_oop mutates `self.status`.
+- **Prose enforcement**: Aver requires prose to pass `aver check`; pfa has the prose as convention; python_oop keeps only a one-line docstring (no rationale, no verify examples).
+- **Module-level `decision` blocks**: Aver declares `StatesAsClosedVariant` and `AuditTrailInline` at the top of the module, explaining *why* this state machine is a closed sum type and why events live inline. pfa mirrors this in the module docstring. python_oop has nothing at that level — the design rationale has to be reconstructed by the reader from the code shape.
 
 **Baseline inconsistency in v1 — addressed in v2 canonical rerun.** The two Python baselines originally drifted across programs (the table below shows v1 state, before canonical rewrite). In v2, all `python_from_aver` files carry matching "Design decisions:" docstrings and complete helper docs; all Aver files pass `aver check` with full `verify` coverage. `python_oop` was left unchanged as an idiomatic-Python control. Headline findings held after v2 rerun. Density per file (v1):
 
