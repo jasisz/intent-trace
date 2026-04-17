@@ -13,12 +13,11 @@ import matplotlib as mpl
 # Aver brand palette (from averlang.dev style.css + logo SVGs)
 AMBER = "#d97706"
 AMBER_LIGHT = "#f59e0b"
+AMBER_DARK = "#92400e"
 SLATE = "#1e293b"
 SLATE_MUTED = "#64748b"
 SLATE_LIGHT = "#e2e8f0"
 BG = "#f8fafc"
-GREEN = "#16a34a"
-RED = "#dc2626"
 
 LANG_COLORS = {
     "aver": AMBER,
@@ -194,8 +193,8 @@ READER_PATHS = {
 }
 READER_COLORS = {
     "Sonnet": AMBER,
-    "gpt-4.1": "#2563eb",  # blue — GPT family
-    "Gemini Flash": "#16a34a",  # green — Google family
+    "gpt-4.1": SLATE,
+    "Gemini Flash": AMBER_LIGHT,
 }
 
 
