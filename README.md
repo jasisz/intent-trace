@@ -6,13 +6,15 @@ This repo tests a claim from the [Aver language](https://averlang.dev) project: 
 
 **What we measure is *intent of the diff*, not *intent of the program*.** The reviewer sees a unified diff between a baseline and a refactored snapshot and has to reconstruct what the author was trying to *change*. This is a different question from "given the full codebase, what does this program do" — Aver may have stronger or weaker properties for whole-program comprehension than this benchmark can show. We deliberately stay in the PR-review frame: reviewer sees the diff, nothing more.
 
-Two headline findings:
+Two headline findings — stated carefully, because most per-cell differences are in the 0.03–0.20 range and the rubric noise band is ≥0.3 per cell:
 
-1. **On small-to-medium programs (≤400 lines), Aver reaches parity or edges ahead of heavily-documented Python transliteration on strong readers (Claude Sonnet and gpt-4.1), despite Claude/OpenAI having essentially zero training on Aver.** An earlier 3-judge (Claude-only) rerun suggested a symmetric home-field advantage; the 5-judge cross-vendor rerun collapsed most of that signal, pointing to **judge-family bias more than reader-family bias** as the dominant confound.
+1. **On small-to-medium programs (≤400 lines), Aver sits within rubric noise of heavily-documented Python transliteration on the two strongest readers (Claude Sonnet, gpt-4.1), despite Claude/OpenAI having essentially zero training on Aver.** This is **parity-within-noise**, not a directional win; the top-2 gap on Sonnet is 0.03, on gpt-4.1 is 0.10. An earlier 3-judge (Claude-only) rerun suggested a symmetric home-field advantage; the 5-judge cross-vendor rerun collapsed most of that signal, pointing to **judge-family bias more than reader-family bias** as the dominant confound.
 
-2. **On the largest program (`payment_ops`, ~1300 lines, real multi-module domain), heavily-documented Python pulls clearly ahead — by 0.60 on average.** `python_oop` (sparse docstrings) stays near Aver, so it is **docstring volume, not Python as a language**, that wins at scale. Aver's structured-prose format saturates at small sizes; paragraph-scale docstrings keep adding review-relevant context in big diffs.
+2. **On the largest program (`payment_ops`, ~1300 lines), `python_from_aver` pulls clearly ahead of Aver — by 0.60 on average.** This gap is large and consistent across all three readers. We cannot cleanly attribute it to language format alone, because the `python_from_aver` baseline on `payment_ops` carries more prose (docstrings + inline comments) than the Aver prose for the same program — see the baseline density table below. The finding is real ("Aver loses on the 1300-line domain"), but the causal story ("prose volume vs prose format") is confounded by baseline inconsistency across programs.
 
 Across all readers and program sizes, Aver depends heavily on its prose layer (`intent`, `decision`, `?`, `verify`) — masking it produces the largest ablation drop of any variant, and `aver/masked` is the weakest cell of the six on every reader.
+
+**What this benchmark measures, precisely.** How well an LLM reviewer reconstructs the *intent of a change* from a unified diff — nothing about whole-program comprehension, production readability, or human-in-the-loop review. The claim is narrow, and that narrowness is why the results are measurable at all.
 
 ## Method in one paragraph
 
@@ -32,13 +34,38 @@ For each `(program, prompt, language, view)` cell, an agent applies the change r
 - **full** — the unified diff as a PR reviewer sees it (before/after, 3 lines of context around changes).
 - **masked** — same diff, but with the **prose layer stripped**: in Aver that's `intent = …`, `decision …`, `? "…"` descriptions, and `verify …` blocks; in Python that's docstrings and `#` comments. Ablation tells us what each language's prose layer actually transmits.
 
+  **Caveat on `verify` blocks.** Aver `verify` is an executable specification — closer to a Python `assert` than to a docstring. Stripping it therefore mixes "narrative prose" with "spec" in a way that is asymmetric across languages (Python `assert` statements are *not* stripped in the masked view). This penalizes Aver's masked score by a hard-to-separate amount. A follow-up `aver/masked_keep_verify` view is wired into `intent_trace/mask.py` for future runs to disentangle these; current dataset still uses the stricter strip.
+
 ### Three language variants
 
 - **aver** — the original.
-- **python_from_aver** — **an intentionally non-idiomatic transliteration baseline.** It is Python syntax carrying Aver-style affordances: frozen dataclasses, pure functions, `replace()`-based updates, camelCase names, small composable helpers, and heavy docstrings lifted from Aver's `?` descriptions. Its purpose is *not* to model typical Python — it is to isolate how much review legibility comes from the carrier language versus the preserved intent structure. Treating it as "what a Python dev would write" is a misreading.
-- **python_oop** — an independent OOP Python design of the same programs (classes with methods, mutation where natural, snake_case, typed exception hierarchy, **sparse** ~30–40% docstring coverage — classical idiomatic Python, the "Python a Python dev would actually write" target).
+- **python_from_aver** — **an intentionally non-idiomatic transliteration baseline.** Python syntax carrying Aver-style affordances: frozen dataclasses, pure functions, `replace()`-based updates, small composable helpers, and docstrings carrying what would be `?` descriptions in Aver. Its purpose is *not* to model typical Python — it is to isolate how much review legibility comes from the carrier language versus the preserved intent structure.
+- **python_oop** — an OOP Python design of the same programs (classes with methods, mutation where natural, typed exception hierarchy). Intended as "the Python a Python dev would actually write."
 
-Both Python variants cover the same domains as the Aver version and their smoke tests pass independently. The three variants give a triangulation: language idiom × prose density × structural decomposition.
+**Baseline inconsistency disclosed up front.** The two Python baselines are *not* uniform across programs — they were authored at different times and the style drifted. Measured characteristics per file:
+
+```
+program         variant              lines   fns   docs   doc-chars   cmt-chars   snake   camel
+inventory       aver                  252    33     —        —         —           —       —    (prose: 2493 chars)
+                python_from_aver      196    16     8      860          0          15       0
+                python_oop            247    24     8      590         90          19       0
+workflow        aver                  209    21     —        —         —           —       —    (prose: 1445 chars)
+                python_from_aver      191    14     9      921         70          14       0
+                python_oop            212    15     8      825         70          11       0
+taskmanager     aver                  262    26     —        —         —           —       —    (prose: 1959 chars)
+                python_from_aver      258    14    15     1562          0          14       0
+                python_oop            384    28    23     1968          0          18       0
+payment_ops     aver                 1305   112     —        —         —           —       —    (prose: 6305 chars)
+                python_from_aver     1921    85    79     5656       2463           7      45   ← camelCase + heavy docs
+                python_oop           2297   101    91     8728       5936          82       0   ← heavy docs too
+```
+
+Concretely:
+- `python_from_aver` uses **snake_case** in inventory/workflow/taskmanager but **camelCase** in payment_ops, and docstring density ranges from 50% (inventory, 8/16 funcs) to 93% (payment_ops, 79/85).
+- `python_oop` is **not uniformly sparse**: small programs have ~30% docstring coverage, but `payment_ops/python_oop` has 90% docstring + 5936 chars of comments — richer than any other file in the benchmark.
+- On `payment_ops` specifically, all three variants carry heavy prose; on `inventory`, all three are sparse. That is not a designed gradient; it is an artifact of baseline construction.
+
+Both Python variants cover the same domains as Aver and their smoke tests pass independently. The three variants still give a triangulation (language idiom × prose density × structural decomposition), but the density axis is uneven and **that is material for interpreting the `payment_ops` result**.
 
 ## Programs
 
@@ -188,7 +215,7 @@ The pattern replicates across every reader: `aver/masked` is the lowest-scoring 
 
 Read these as statements about the specific setup described above — 3 reader families, 5 judge models spanning 3 vendors, 3 agent-generated baselines, 18 prompts across 4 programs — not as universal claims.
 
-1. **Parity between Aver and heavy-doc Python is real for strong readers.** Under Claude Sonnet reader and gpt-4.1 reader, `aver/full` and `python_from_aver/full` are within 0.03 and 0.10 points respectively — both below rubric noise. Aver also beats idiomatic OOP Python under both (by 0.35 and 0.14). Under Gemini Flash, python_from_aver wins by a clear 0.50 — but all three language variants score lower there, suggesting reader capability is the bottleneck, not a language bias.
+1. **Aver reads about as well as heavy-doc Python on strong readers, within rubric noise.** Under Claude Sonnet reader `aver/full` (8.61) and `python_from_aver/full` (8.58) differ by 0.03; under gpt-4.1 the gap is 0.10 (8.54 vs 8.44). Both are below the per-cell noise band of ~0.3, so this is parity — not a directional Aver win. Aver does sit 0.14–0.35 above `python_oop` on those same readers, which is larger than the top-2 gap but still inside noise. Under Gemini Flash, `python_from_aver` leads Aver by a clearer 0.50 — but all three variants drop there, consistent with reader capability rather than language bias.
 
 2. **"Home-field advantage" was mostly a judge-panel artifact.** The earlier 3-judge (Claude-only) panel made gpt-4.1 rank python_oop first (8.50) and Aver third (8.36). Swapping in a 5-judge cross-vendor panel put Aver first (8.54) on the same gpt-4.1 reader. Judge-family bias (Claude vs GPT means per reader) is only +0.06, within noise. This is the single biggest methodological lesson from the rerun.
 
@@ -203,33 +230,35 @@ Read these as statements about the specific setup described above — 3 reader f
    - **Python-from-Aver docstrings** → *prompt-match precision too* (P drops 0.50, D stable)
    - **Python-OOP sparse docs** → *redundant ornament on code-level signal* (no measurable drop)
 
-7. **Aver's legibility edge is program-size dependent.** On `inventory` and `workflow` (~200–250 lines, single-module) Aver wins or ties every Python variant on every reader. On `taskmanager` (~400 lines, multi-module) Aver already falls behind. On `payment_ops` (~1300 lines, real multi-module domain) **`python_from_aver` beats Aver by 0.60** on average — the gap is consistent across all three readers, and `python_oop` stays near Aver, so it is **docstring volume, not Python itself, that pulls ahead at scale**. The structured-prose format Aver uses saturates at small sizes; paragraph-scale Python docstrings keep adding information in big diffs. Whether Aver can close this gap with richer module-level `intent` blocks is an open question this benchmark doesn't answer.
+7. **Aver's legibility edge is program-size dependent — but the causal story is confounded.** Scores shift: on `inventory` and `workflow` (~200–250 lines, single-module) Aver ties every Python variant. On `taskmanager` (~400 lines, multi-module) Aver is slightly behind. On `payment_ops` (~1300 lines) `python_from_aver` leads Aver by 0.60. The clean narrative would be "prose volume wins at scale, because paragraph-scale docstrings keep adding review-relevant context in big diffs." But the `python_from_aver` baseline on `payment_ops` is *also* the one with 93% docstring coverage + 2463 chars of inline comments + camelCase names, while the baseline on `inventory` is 50% docstring + snake_case. So the "size effect" and the "baseline style drift" are entangled (see Threat #1). The safe statement: **Aver loses on `payment_ops`, and the baseline it loses to carries more prose**. Whether that holds against a prose-matched Python baseline is an open question a clean rerun would answer.
 
 ## Why this experiment even exists
 
 [Aver's thesis](https://averlang.dev) is that code must be **legible to an AI reviewer** — that the artifact carries intent so a reviewer (human or AI) can reconstruct it without prior familiarity. This benchmark operationalizes that claim: we treat an LLM as the reviewer, measure how much intent it can reconstruct from each artifact style, and compare across training-exposure asymmetries.
 
-The headline: **Aver's structural intent declarations (`intent`, `decision`, `?`, `verify`) are a functional equivalent for Python's heavy docstring tradition, from the perspective of an AI review — at the size range of a typical single module (≤400 lines). On small/medium programs Aver ties or edges ahead of idiomatic OOP Python on strong readers, despite zero training presence. On a 1300-line multi-module domain (`payment_ops`), paragraph-scale Python docstrings pull ahead by 0.60 — a clean demonstration that prose volume matters more than prose format at scale.** The prose layer is load-bearing across the board (masked Aver is the weakest cell everywhere); the remaining question is whether richer module-level `intent` declarations can close the large-program gap.
+The headline, stated cautiously: **at the size range of a typical single module (≤400 lines), Aver's structural intent declarations (`intent`, `decision`, `?`, `verify`) read as well as Python's heavy docstring tradition on strong AI reviewers — despite Aver having essentially zero training presence.** At 1300 lines of multi-module domain code, paragraph-scale Python docstrings pull ahead; whether that is a property of prose format or of raw prose volume is not cleanly separable in the current dataset (see threat #1). The prose layer is load-bearing across the board — masked Aver is the weakest cell on every reader — so the open question is whether richer module-level `intent` declarations can close the large-program gap.
 
 ## Threats to validity
 
 These are the reasons to treat the numbers as *indicative* rather than *conclusive*, in rough order of impact.
 
-1. **The benchmark is diff-review, not program comprehension.** We measure how well a reviewer reconstructs the *intent of a change* from a unified diff. We do not measure how well a reviewer understands the *intent of a whole program* given its full source. Aver has affordances for whole-program understanding (module `intent`, `decision` blocks, `aver context` tool) that this benchmark simply does not exercise. A Python-OOP program with a terse diff may still be harder to understand at the program level than an Aver program — that's a different, un-tested question.
+1. **Baseline inconsistency across programs.** The biggest threat to the large-program finding. `python_from_aver` was intended as a single transliteration style but drifted: snake_case in inventory/workflow/taskmanager, camelCase in payment_ops; docstring coverage 50% in inventory, 93% in payment_ops. `python_oop` was intended as uniformly sparse (~30–40% docstrings) but payment_ops is 90% docstring + 5936 chars of inline comments. That means **headline #2** ("heavy-doc Python beats Aver on large programs") is confounded with "the large program happens to have the heaviest docstrings." See the density table in *Three language variants* above for exact numbers. A clean rerun would require a single uniform transliteration style.
 
-2. **Small domain coverage.** Four programs, 18 prompts total. Three are small/medium invented domains (inventory, workflow, taskmanager); one is a real-world multi-module domain (payment_ops, ~1300 lines). Typical enterprise codebases are 10k+ lines across dozens of modules; behavior at that scale is not tested.
+2. **Masked ablation for Aver strips `verify` blocks.** `verify` is executable spec, not prose — closer to a Python `assert` than to a docstring. Stripping it in the masked view conflates two different abstractions. Python `assert`s are NOT stripped in the Python masked view, so the comparison is asymmetric. The current dataset runs with `verify` stripped (the stricter condition); a follow-up `masked_keep_verify` view is wired into `intent_trace/mask.py`. Our reported aver-masked scores are therefore a lower bound on what they would be under a spec-preserving ablation.
 
-3. **Agent-produced refactors, not human commits.** Both the baselines and the refactors were generated by sub-agents (Claude Code) applying the change requests. Real open-source commits from human developers would reduce construct bias, but require domain-matched Aver corpora that don't yet exist (Aver is a new language).
+3. **The benchmark is diff-review, not program comprehension.** We measure how well a reviewer reconstructs the *intent of a change* from a unified diff. We do not measure how well a reviewer understands the *intent of a whole program* given its full source. Aver has affordances for whole-program understanding (module `intent`, `decision` blocks, `aver context` tool) that this benchmark simply does not exercise. A Python-OOP program with a terse diff may still be harder to understand at the program level than an Aver program — that's a different, un-tested question.
 
-4. **`python_from_aver` is a transliteration baseline, not typical Python** (see above). Any reader who treats it as "what a Python dev would write" will over-read the Aver-vs-Python framing. The intended comparison is three-way (`aver` / `python_from_aver` / `python_oop`), not binary.
+4. **N=18 per cell is small.** 18 × 3 langs × 2 views × 3 readers, with rubric noise of ≥0.3 per cell and per-cell gaps often in the 0.03–0.20 range. The phrase "within rubric noise" appears often above and is doing real work — none of these differences are statistically strong enough to call directional wins, except the 0.60 payment_ops gap (which is itself confounded; see #1). Bootstrap confidence intervals would be a small lift on the existing JSONL and are a planned addition.
 
-5. **Rubric is an LLM judging another LLM.** The 0–10 score is itself a model output, not ground truth. Two shapes of judge bias were measured directly: (a) judge-family preference for own-vendor reader is only +0.06 (within rubric noise); (b) GPT judges score Aver guesses +0.22 higher than Claude judges do (this is why the 3-judge → 5-judge transition reshuffled the top of the table). OpenAI judges are systematically stricter on prompt-axis and more lenient on diff-axis; the two partly cancel in the averaged headline but the composition of the judge panel is material. No human raters.
+5. **Small domain coverage.** Four programs, 18 prompts total. Three are small/medium invented domains (inventory, workflow, taskmanager); one is a real-world multi-module domain (payment_ops, ~1300 lines). Typical enterprise codebases are 10k+ lines across dozens of modules; behavior at that scale is not tested.
 
-6. **Docstring volume is a live confound.** `python_from_aver` ships with extensive paragraph-length docstrings inherited from Aver's `?` descriptions — often richer per function than the Aver prose alone. On `payment_ops` the `python_from_aver` docstring payload is substantially larger (in characters) than the Aver prose payload for the same program. The benchmark does not normalize for prose length, so the large-program gap we report is a combined effect of *language format* and *prose volume*. A shorter-doc control (or a richer Aver-prose variant with module-level decision blocks) would disentangle these.
+6. **Agent-produced refactors, not human commits.** Both the baselines and the refactors were generated by sub-agents (Claude Code) applying the change requests. Real open-source commits from human developers would reduce construct bias, but require domain-matched Aver corpora that don't yet exist (Aver is a new language).
 
-7. **Gemini 2.5 Flash is the weakest of the three readers.** It scores every language variant ~0.3–0.7 below Sonnet and gpt-4.1 readers. This looks more like limited reader capability than a language preference — but it means the one reader where Python-from-Aver clearly beats Aver is also the reader with the weakest overall reconstruction. A Gemini-Pro rerun would clarify.
+7. **Rubric is an LLM judging another LLM.** The 0–10 score is itself a model output, not ground truth. Two shapes of judge bias were measured directly: (a) judge-family preference for own-vendor reader is only +0.06 (within rubric noise); (b) GPT judges score Aver guesses +0.22 higher than Claude judges do (this is why the 3-judge → 5-judge transition reshuffled the top of the table). OpenAI judges are systematically stricter on prompt-axis and more lenient on diff-axis; the two partly cancel in the averaged headline but the composition of the judge panel is material. No human raters.
 
-8. **`aver context` tool was tested and removed.** We initially ran an `aver_context` view (diffing compressed intent summaries) but concluded the setup was synthetic — `aver context` is a state-projection tool, not a change-representation tool, and diffing two projections doesn't match how reviewers actually use the tool. Scores collapsed in complex multi-module code for structural (not legibility) reasons. Code path dropped; historical JSONL entries from that view are not included in the headline numbers.
+8. **Gemini 2.5 Flash is the weakest of the three readers.** It scores every language variant ~0.3–0.7 below Sonnet and gpt-4.1 readers. This looks more like limited reader capability than a language preference — but it means the one reader where Python-from-Aver clearly beats Aver is also the reader with the weakest overall reconstruction. A Gemini-Pro rerun would clarify.
+
+9. **`aver context` tool was tested and removed.** We initially ran an `aver_context` view (diffing compressed intent summaries) but concluded the setup was synthetic — `aver context` is a state-projection tool, not a change-representation tool, and diffing two projections doesn't match how reviewers actually use the tool. Scores collapsed in complex multi-module code for structural (not legibility) reasons. Code path dropped; historical JSONL entries from that view are not included in the headline numbers.
 
 ## Reproduce
 

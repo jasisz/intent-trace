@@ -1,9 +1,17 @@
 """Aggressive ablation: strip prose/narrative layers from source files.
 
-Aver: strip `intent = ...`, `? "..."` descriptions, `decision ...` blocks,
-      `verify ...` and `verify ... law ...` blocks.
+Aver (default): strip `intent = ...`, `? "..."` descriptions, `decision ...`
+      blocks, `verify ...` and `verify ... law ...` blocks.
 Python: strip module and function docstrings, comments (via ast.unparse),
         `_smoke*` functions, and `if __name__ == "__main__":` blocks.
+
+Note on `verify` blocks: these are executable specifications in Aver, closer
+to Python `assert` than to a docstring. Stripping them for the "masked" view
+is therefore an aggressive choice — it treats spec-as-prose. Set
+`keep_verify=True` (or pass lang="aver_keep_verify") to preserve them while
+still removing the narrative (`intent` / `?` / `decision`). The current
+dataset was scored with keep_verify=False; a follow-up run with
+keep_verify=True would disentangle prose ablation from spec ablation.
 
 Goal: remove human-targeted narrative while preserving executable/typed
 structure, so diffs show only code-level change.
@@ -13,7 +21,7 @@ from __future__ import annotations
 import ast
 
 
-def mask_aver(source: str) -> str:
+def mask_aver(source: str, keep_verify: bool = False) -> str:
     lines = source.splitlines()
     out: list[str] = []
     i = 0
@@ -37,8 +45,8 @@ def mask_aver(source: str) -> str:
         if ind == 0:
             first = stripped.split()[0]
 
-            # Full-block strip: decision / verify
-            if first in ("decision", "verify"):
+            # Full-block strip: decision always; verify only when not kept
+            if first == "decision" or (first == "verify" and not keep_verify):
                 i += 1
                 while i < n:
                     nxt = lines[i]
@@ -158,6 +166,8 @@ def mask_python(source: str) -> str:
 def mask(lang: str, source: str) -> str:
     if lang == "aver":
         return mask_aver(source)
+    if lang == "aver_keep_verify":
+        return mask_aver(source, keep_verify=True)
     if lang.startswith("python"):  # python, python_oop, python_fp, ...
         return mask_python(source)
     raise ValueError(f"unknown lang: {lang}")

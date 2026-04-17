@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -63,6 +64,24 @@ def load_latest(results_root: Path) -> list[dict]:
     return rows
 
 
+def _bootstrap_ci(per_slice: list[float], n_resamples: int = 10000,
+                  pct_low: float = 2.5, pct_high: float = 97.5,
+                  seed: int = 0) -> tuple[float, float]:
+    """Return (lo, hi) percentile bootstrap CI of the mean over per-slice scores."""
+    rng = random.Random(seed)
+    k = len(per_slice)
+    if k == 0:
+        return (float("nan"), float("nan"))
+    means = []
+    for _ in range(n_resamples):
+        sample = [per_slice[rng.randrange(k)] for _ in range(k)]
+        means.append(sum(sample) / k)
+    means.sort()
+    lo = means[int(len(means) * pct_low / 100)]
+    hi = means[int(len(means) * pct_high / 100)]
+    return (lo, hi)
+
+
 def aggregate(rows: list[dict]) -> dict[tuple[str, str], dict]:
     buckets: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for r in rows:
@@ -70,9 +89,14 @@ def aggregate(rows: list[dict]) -> dict[tuple[str, str], dict]:
     out = {}
     for k, rr in buckets.items():
         n = len(rr)
-        p = sum(x["judgment_prompt"]["median"] for x in rr) / n
-        d = sum(x["judgment_diff"]["median"] for x in rr) / n
-        out[k] = {"n": n, "p": p, "d": d, "avg": (p + d) / 2}
+        p_per = [x["judgment_prompt"]["median"] for x in rr]
+        d_per = [x["judgment_diff"]["median"] for x in rr]
+        avg_per = [(p + d) / 2 for p, d in zip(p_per, d_per)]
+        p = sum(p_per) / n
+        d = sum(d_per) / n
+        lo, hi = _bootstrap_ci(avg_per)
+        out[k] = {"n": n, "p": p, "d": d, "avg": (p + d) / 2,
+                  "ci_lo": lo, "ci_hi": hi, "per_slice": avg_per}
     return out
 
 
@@ -80,23 +104,27 @@ def plot_ranking(agg: dict, out_path: Path) -> None:
     items = sorted(agg.items(), key=lambda kv: -kv[1]["avg"])
     labels = [f"{LANG_LABELS[lang]}\n{view}" for (lang, view), _ in items]
     values = [v["avg"] for _, v in items]
+    err_lo = [v["avg"] - v["ci_lo"] for _, v in items]
+    err_hi = [v["ci_hi"] - v["avg"] for _, v in items]
     colors = [LANG_COLORS[lang] for (lang, _), _ in items]
     hatches = [VIEW_HATCH[view] for (_, view), _ in items]
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.bar(labels, values, color=colors, edgecolor=SLATE, linewidth=1.2)
+    bars = ax.bar(labels, values, color=colors, edgecolor=SLATE, linewidth=1.2,
+                  yerr=[err_lo, err_hi], ecolor=SLATE, capsize=4,
+                  error_kw={"linewidth": 1.0})
     for bar, hatch in zip(bars, hatches):
         bar.set_hatch(hatch)
-    for bar, value in zip(bars, values):
+    for bar, value, ehi in zip(bars, values, err_hi):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
-            value + 0.05,
+            value + ehi + 0.06,
             f"{value:.2f}",
             ha="center", va="bottom", fontweight="bold", color=SLATE,
         )
-    ax.set_ylabel("Average score (P+D)/2", fontweight="bold")
+    ax.set_ylabel("Average score (P+D)/2  (bars = 95% bootstrap CI)", fontweight="bold")
     ax.set_title(
-        "Intent-trace: AI reviewer accuracy by language & view",
+        "Intent-trace: AI reviewer accuracy by language & view (Sonnet reader)",
         fontweight="bold", pad=15, color=SLATE,
     )
     ax.set_ylim(7.0, 9.2)

@@ -5,8 +5,11 @@ Three axes:
   - diff:   does the reviewer's guess describe what actually changed?
   - quality: does the change fulfill the original request?
 
-Each judge returns {"score": 0-3, "reasoning": str}.
-Ensemble runs N models, returns {"median": int, "spread": int, "individual": {...}}.
+Each judge returns {"score": int 0-10, "reasoning": str}. Ensemble runs N
+models and returns
+  {"median": float (rounded to 0.1), "mean": float (rounded to 0.01),
+   "spread": int, "individual": {name: {"score": ..., "reasoning": ...}}}.
+Failed judges are kept in "individual" with score=-1 and an error reasoning.
 """
 from __future__ import annotations
 
@@ -83,6 +86,12 @@ _JSON_TAIL = (
 
 
 def _extract_json(text: str) -> dict:
+    """Parse a judge response to {"score": int 0-10, "reasoning": str}.
+
+    Strategies, in order: code-fence strip → direct json.loads → flat object
+    search → key-value regex. Any dict returned from the regex fallback is
+    tagged with _fallback=True so callers/tests can spot degraded parsing.
+    """
     text = text.strip()
     m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if m:
@@ -97,12 +106,17 @@ def _extract_json(text: str) -> dict:
             return json.loads(m.group(0))
         except json.JSONDecodeError:
             pass
-    sm = re.search(r'"?score"?\s*[:=]\s*(\d)', text)
+    # Fallback: two-digit score so "10" isn't silently truncated to "1".
+    sm = re.search(r'"?score"?\s*[:=]\s*(\d{1,2})', text)
     rm = re.search(r'"?reasoning"?\s*[:=]\s*"?([^"\n]+)"?', text)
     if sm:
+        score = int(sm.group(1))
+        if not 0 <= score <= 10:
+            raise ValueError(f"regex fallback produced out-of-range score {score}: {text[:200]!r}")
         return {
-            "score": int(sm.group(1)),
+            "score": score,
             "reasoning": rm.group(1).strip().rstrip('"') if rm else "(unparsed)",
+            "_fallback": True,
         }
     raise ValueError(f"could not extract JSON from: {text[:200]!r}")
 

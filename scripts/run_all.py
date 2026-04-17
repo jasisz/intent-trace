@@ -48,10 +48,13 @@ JUDGE_MODELS = {
     "sonnet": os.environ.get("INTENT_TRACE_JUDGE_SONNET", "claude-sonnet-4-6"),
     "haiku": os.environ.get("INTENT_TRACE_JUDGE_HAIKU", "claude-haiku-4-5-20251001"),
 }
-# Optional 4th judge (cross-vendor validation). Set INTENT_TRACE_JUDGE_GPT to enable.
-_GPT_JUDGE = os.environ.get("INTENT_TRACE_JUDGE_GPT", "").strip()
-if _GPT_JUDGE:
-    JUDGE_MODELS["gpt"] = _GPT_JUDGE
+# Optional extra judges for cross-vendor validation. Comma-separated list:
+#   INTENT_TRACE_JUDGE_GPT="gpt-4o,gpt-4.1"
+# Each entry becomes a separate judge keyed by its model id, so all N show up
+# in individual judgments rather than being lumped under a single "gpt" slot.
+_GPT_JUDGES = [m.strip() for m in os.environ.get("INTENT_TRACE_JUDGE_GPT", "").split(",") if m.strip()]
+for _m in _GPT_JUDGES:
+    JUDGE_MODELS[_m] = _m
 
 client = Anthropic()
 

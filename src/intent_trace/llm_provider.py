@@ -10,7 +10,7 @@ from functools import lru_cache
 
 
 def is_openai_model(model: str) -> bool:
-    return model.startswith(("gpt-", "o1", "o2", "o3", "o4", "chatgpt-"))
+    return model.startswith(("gpt-", "chatgpt-", "o1-", "o3-", "o4-"))
 
 
 def is_google_model(model: str) -> bool:
