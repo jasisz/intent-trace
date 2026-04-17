@@ -49,10 +49,12 @@ mpl.rcParams.update({
 
 
 def load_latest(results_root: Path) -> list[dict]:
-    latest = max(
-        (p for p in results_root.glob("ensemble_*/slices.jsonl")),
-        key=lambda p: p.stat().st_mtime,
+    candidates = list(results_root.glob("ensemble_*/slices.jsonl")) + list(
+        results_root.glob("gpt_added_*/slices.jsonl")
     )
+    if not candidates:
+        raise SystemExit("no slices.jsonl found in results/")
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
     print(f"source: {latest}")
     rows: list[dict] = []
     for line in latest.read_text().splitlines():

@@ -17,6 +17,8 @@ from typing import Callable
 
 from anthropic import Anthropic
 
+from .llm_provider import call_llm
+
 PROMPT_AXIS_SYS = (
     "You are scoring how well an LLM reviewer guessed the intent of a code change, "
     "given only the diff. Use the full 0-10 range. Be precise — small differences "
@@ -106,13 +108,8 @@ def _extract_json(text: str) -> dict:
 
 
 def _call(client: Anthropic, model: str, system: str, user: str) -> dict:
-    r = client.messages.create(
-        model=model,
-        max_tokens=512,
-        system=system,
-        messages=[{"role": "user", "content": user + _JSON_TAIL}],
-    )
-    return _extract_json(r.content[0].text)
+    text = call_llm(model, system, user + _JSON_TAIL, max_tokens=512)
+    return _extract_json(text)
 
 
 def judge_prompt_axis(client: Anthropic, model: str, original_prompt: str, guess: str) -> dict:

@@ -39,6 +39,7 @@ from intent_trace.judges import (
     judge_diff_axis,
     judge_quality_axis,
 )
+from intent_trace.llm_provider import call_llm
 
 MODEL_B = os.environ.get("INTENT_TRACE_MODEL_B", "claude-sonnet-4-6")
 
@@ -47,6 +48,10 @@ JUDGE_MODELS = {
     "sonnet": os.environ.get("INTENT_TRACE_JUDGE_SONNET", "claude-sonnet-4-6"),
     "haiku": os.environ.get("INTENT_TRACE_JUDGE_HAIKU", "claude-haiku-4-5-20251001"),
 }
+# Optional 4th judge (cross-vendor validation). Set INTENT_TRACE_JUDGE_GPT to enable.
+_GPT_JUDGE = os.environ.get("INTENT_TRACE_JUDGE_GPT", "").strip()
+if _GPT_JUDGE:
+    JUDGE_MODELS["gpt"] = _GPT_JUDGE
 
 client = Anthropic()
 
@@ -100,11 +105,7 @@ def llm_b_guess(lang: str, diff: str) -> dict:
         '  "unclear": "optional one-line note, or null"\n}'
         "\n\nIMPORTANT: raw JSON only, no markdown, no preamble."
     )
-    r = client.messages.create(
-        model=MODEL_B, max_tokens=512, system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    text = r.content[0].text.strip()
+    text = call_llm(MODEL_B, system, user, max_tokens=512).strip()
     m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if m:
         text = m.group(1).strip()
