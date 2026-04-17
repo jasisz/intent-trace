@@ -10,7 +10,7 @@ Two headline findings — stated carefully, because most per-cell differences ar
 
 1. **On small-to-medium programs (≤400 lines), Aver sits within rubric noise of heavily-documented Python transliteration on the two strongest readers (Claude Sonnet, gpt-4.1), despite Claude/OpenAI having essentially zero training on Aver.** This is **parity-within-noise**, not a directional win; the top-2 gap on Sonnet is 0.03, on gpt-4.1 is 0.10. An earlier 3-judge (Claude-only) rerun suggested a symmetric home-field advantage; the 5-judge cross-vendor rerun collapsed most of that signal, pointing to **judge-family bias more than reader-family bias** as the dominant confound.
 
-2. **On the largest program (`payment_ops`, ~1300 lines), `python_from_aver` pulls clearly ahead of Aver — by 0.60 on average.** This gap is large and consistent across all three readers. We cannot cleanly attribute it to language format alone, because the `python_from_aver` baseline on `payment_ops` carries more prose (docstrings + inline comments) than the Aver prose for the same program — see the baseline density table below. The finding is real ("Aver loses on the 1300-line domain"), but the causal story ("prose volume vs prose format") is confounded by baseline inconsistency across programs.
+2. **On the largest program (`payment_ops`, ~1300 lines), `python_from_aver` pulls clearly ahead of Aver — by 0.60 on average, and the gap concentrates on architectural refactors (+0.79) more than on additive changes (+0.42).** On those same architectural prompts, `python_oop` also drops (to 7.75, below Aver's 7.88), so **heavy docstrings — not Python itself — are what keep large-program architectural diffs legible**. The causal story ("prose volume vs prose format") is confounded by baseline inconsistency across programs (see baseline density table); the cleanest follow-up is a prose-matched Python baseline on `payment_ops`. Small bright spot: on the one vague directive in the dataset Aver leads every Python variant by a clear margin (N=3, suggestive not conclusive).
 
 Across all readers and program sizes, Aver depends heavily on its **narrative prose layer** (`intent`, `decision`, `?`) — masking it produces the largest ablation drop of any variant, and `aver/masked` is the weakest cell on every reader. A follow-up ablation preserving `verify` blocks (executable spec) found they carry almost no legibility signal on top of the narrative layer — the drop comes from prose, not spec.
 
@@ -190,6 +190,29 @@ The most likely reason: Aver's prose layer is dense per construct, but Python's 
 
 ![program reader heatmap](results/plots/program_reader_heatmap.png)
 
+### Inter-judge agreement (Krippendorff's α)
+
+Per-item reliability of the 5-judge ensemble on the existing JSONL (no new API calls). For the 0–10 ordinal rubric, Krippendorff guidelines are: α ≥ 0.80 high, 0.67–0.80 tentative, <0.67 indicates the rubric is not reliable enough for per-item conclusions.
+
+```
+reader     axis                  n_items   α_ordinal   α_interval   ρ̄ Spearman pairs
+Sonnet     P-axis                    162      0.549        0.551           0.622
+Sonnet     D-axis                    162      0.313        0.400           0.448
+gpt-4.1    P-axis                    162      0.532        0.545           0.614
+gpt-4.1    D-axis                    162      0.225        0.280           0.394
+Gemini     P-axis                    162      0.472        0.585           0.585
+Gemini     D-axis                    162      0.279        0.415           0.425
+pooled     P-axis                    486      0.528        0.574            —
+pooled     D-axis                    486      0.288        0.400            —
+Q-axis (3 Claude judges)             162      ~0.22        ~0.29            —
+```
+
+**Honest reading.** On the P-axis (prompt-match) α sits around 0.53 — below the "tentative" threshold. Judges agree on **ranking** (pairwise Spearman ρ̄ ≈ 0.60) but disagree on absolute per-item score. On the D-axis (diff-fidelity) α ≈ 0.29 is low — judges disagree substantially on how faithfully a guess describes a diff. The quality axis with only 3 Claude judges and restricted range (most diffs are good) is weaker still.
+
+**What this means for the headline numbers.** The aggregate per-(lang, view) means we report are averages over N=18 slices × 5 judges = 90 scores per cell; the per-item noise mostly averages out (the bootstrap CIs on the ranking chart show this empirically). Directional comparisons at the cell level are still informative, but **fine-grained per-item claims** (e.g., "this single slice scored 7.8 under Aver vs 8.1 under pfa") are not trustworthy under this rubric. Rankings ordered by mean are the right granularity; individual scores are not.
+
+The low D-axis agreement is a real methodological limitation and the clearest argument for a future run with external (human) raters on a stratified subsample.
+
 ### Cross-vendor judge alignment (Sonnet reader, per-judge mean)
 
 ```
@@ -218,6 +241,37 @@ Python (OOP)      full → masked   ΔP = -0.06   ΔD = -0.03
 ```
 
 The pattern replicates across every reader: `aver/masked` is the lowest-scoring cell of all six under Sonnet (8.07), gpt-4.1 (7.79), and Gemini (7.43). Aver concentrates intent in prose that a reviewer cannot reconstruct from the code alone. Idiomatic OOP Python has very little to lose.
+
+### Per diff-type — where Aver's payment_ops loss actually lives
+
+The 18 prompts are not homogeneous. Hand-classified (see `scripts/diff_type_analysis.py`):
+
+| category | n_prompts | example | description |
+|---|---:|---|---|
+| architectural | 6 | event_sourcing_rebuild, extract_reservation_module | decomposition / new transactional abstraction |
+| additive | 9 | add_priority, case_priority_levels | new field / state / feature, no restructuring |
+| data-model | 2 | track_expiration_dates, per_warehouse_reorder_points | reshapes existing data |
+| vague | 1 | make_harder_to_lose_stock | directive without a specific form |
+
+Pooled across the 3 readers, full view, avg (P+D)/2:
+
+| category | n | aver | python_from_aver | python_oop |
+|---|---:|---:|---:|---:|
+| architectural | 18 | 8.26 | **8.58** | 8.26 |
+| additive | 27 | 8.35 | 8.43 | 8.27 |
+| data-model | 6 | 8.50 | 8.58 | 8.50 |
+| vague | 3 | **8.67** | 8.17 | 7.83 |
+
+**Payment_ops, split by category:**
+
+| category | aver | pfa | python_oop | Δ pfa−aver | Δ oop−aver |
+|---|---:|---:|---:|---:|---:|
+| architectural | 7.88 | 8.67 | 7.75 | **+0.79** | −0.12 |
+| additive | 8.50 | 8.92 | 8.42 | +0.42 | −0.08 |
+
+This reshapes headline #2. **Aver's payment_ops loss is not uniform — it concentrates on architectural refactors**, where Aver (7.88) and idiomatic OOP Python (7.75) **both struggle together**, and only the heavy-doc `python_from_aver` survives (8.67). On additive payment_ops changes the gap drops from 0.79 to 0.42. The pattern across programs: heavy docstrings don't win at scale universally — they win specifically at making *architectural* refactors legible at scale. On additive changes, all three variants cluster closer.
+
+Minor but striking: the single vague prompt (`make_harder_to_lose_stock`) is the only cell where Aver beats every Python variant by a clear margin (8.67 vs 8.17 vs 7.83). Structured intent declarations appear to help reviewers infer a specific target from a non-specific directive — but with N=3 this is suggestive, not conclusive.
 
 ### Verify-preserving ablation (`masked_spec` vs `masked`)
 
@@ -262,7 +316,7 @@ Read these as statements about the specific setup described above — 3 reader f
    - **Python-from-Aver docstrings** → *prompt-match precision too* (P drops 0.50, D stable)
    - **Python-OOP sparse docs** → *redundant ornament on code-level signal* (no measurable drop)
 
-7. **Aver's legibility edge is program-size dependent — but the causal story is confounded.** Scores shift: on `inventory` and `workflow` (~200–250 lines, single-module) Aver ties every Python variant. On `taskmanager` (~400 lines, multi-module) Aver is slightly behind. On `payment_ops` (~1300 lines) `python_from_aver` leads Aver by 0.60. The clean narrative would be "prose volume wins at scale, because paragraph-scale docstrings keep adding review-relevant context in big diffs." But the `python_from_aver` baseline on `payment_ops` is *also* the one with 93% docstring coverage + 2463 chars of inline comments + camelCase names, while the baseline on `inventory` is 50% docstring + snake_case. So the "size effect" and the "baseline style drift" are entangled (see Threat #1). The safe statement: **Aver loses on `payment_ops`, and the baseline it loses to carries more prose**. Whether that holds against a prose-matched Python baseline is an open question a clean rerun would answer.
+7. **Aver's large-program loss concentrates on architectural refactors, not all diff types.** The cleaner claim after diff-type stratification: on `payment_ops`, Aver's gap vs `python_from_aver` is +0.79 on architectural prompts (event_sourcing_rebuild, atomic_batch_ingest) but only +0.42 on additive prompts (multi_currency, case_priority). And `python_oop` — which is also weak on docstrings at the architectural prompts on that program — drops to 7.75, below Aver's 7.88. So "heavy-doc Python beats Aver at scale" is really "heavy docstrings survive architectural refactors at scale; Aver and idiomatic OOP Python both struggle there, together." The baseline-volume confound (see Threat #1) still holds, but the finding is sharper: it's about a specific interaction between *program size × diff type × prose volume*, not a flat "language loses."
 
 8. **`verify` blocks carry no measurable legibility signal on top of narrative prose** — and that's a finding about Aver's own design, not about the baselines. Aver's thesis treats `intent` / `decision` / `?` / `verify` as a unified "legibility layer." The `masked_spec` ablation (preserving `verify`, stripping only narrative) shifts Aver's score by +0.01 / +0.11 / −0.17 across the three readers — all inside the ±0.2 replication-noise floor derived from identical-input Python reruns. **Verify blocks are Aver's executable-spec layer. On this benchmark they carry no measurable legibility signal on top of narrative prose — which clarifies what verify is for (correctness / proof target) and what it isn't (review-time comprehension aid).** The narrative prose (`intent` / `decision` / `?`) is the whole legibility story for diff review.
 
@@ -291,7 +345,7 @@ These are split into **scope** (what this benchmark does and doesn't measure —
 
 3. **N=18 per cell is small.** 18 × 3 langs × 2 views × 3 readers, with rubric noise of ≥0.3 per cell and per-cell gaps often in the 0.03–0.20 range. The phrase "within rubric noise" appears often above and is doing real work — none of these differences are statistically strong enough to call directional wins, except the 0.60 payment_ops gap (which is itself confounded; see #1). Bootstrap 95% CIs are now on the ranking chart for the Sonnet reader; extending them to all three readers is a small lift on the existing JSONL.
 
-4. **Rubric is an LLM judging another LLM.** The 0–10 score is itself a model output, not ground truth. Two shapes of judge bias were measured directly: (a) judge-family preference for own-vendor reader is only +0.06 (within rubric noise); (b) GPT judges score Aver guesses +0.22 higher than Claude judges do (this is why the 3-judge → 5-judge transition reshuffled the top of the table). OpenAI judges are systematically stricter on prompt-axis and more lenient on diff-axis; the two partly cancel in the averaged headline but the composition of the judge panel is material. No human raters.
+4. **Rubric is an LLM judging another LLM, and per-item inter-judge agreement is low.** Krippendorff's α on the 5-judge ensemble is ~0.53 on the P-axis, ~0.29 on the D-axis, ~0.22 on the Q-axis (3-Claude). Below the 0.67 "tentative conclusion" threshold. Judges agree on *ranking* (Spearman ρ̄ ≈ 0.60 on P-axis) but not on absolute per-item score. The aggregate cell means we report average out most of that per-item noise (bootstrap CIs visible on the ranking chart), but fine-grained per-slice claims are not trustworthy. Two additional shapes of judge bias were measured directly: (a) judge-family preference for own-vendor reader is only +0.06 (within rubric noise); (b) GPT judges score Aver guesses +0.22 higher than Claude judges do (this is why the 3-judge → 5-judge transition reshuffled the top of the table). OpenAI judges are systematically stricter on prompt-axis and more lenient on diff-axis; the two partly cancel in the averaged headline. **The single cleanest remaining improvement is human raters on a stratified subsample — currently the strongest threat to the rubric.**
 
 5. **Gemini 2.5 Flash is the weakest of the three readers.** It scores every language variant ~0.3–0.7 below Sonnet and gpt-4.1 readers. This looks more like limited reader capability than a language preference — but it means the one reader where Python-from-Aver clearly beats Aver is also the reader with the weakest overall reconstruction. A Gemini-Pro rerun would clarify.
 
