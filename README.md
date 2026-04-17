@@ -68,18 +68,39 @@ verify approveReport
         => Result.Ok(applyApprove(sampleSubmitted("R1", "U1"), User(id="M", name="M", approvalLimitCents=100000), 3000))
 ```
 
-**Aver-in-Python** (`python_from_aver`) — same intent, Python syntax. Result→raise, prose→docstring, verify→pipeline via assert/smoke tests. **Not enforced** — no tooling complains if someone strips the docstring:
+**Aver-in-Python** (`python_from_aver`) — what a faithful Aver-in-Python translation should look like. Result-as-value (not exceptions), explicit `match` on every status branch, full intent docstring carrying what would be a `?` description plus rationale, and design decisions mirrored from the Aver `decision` blocks:
 
 ```python
-def approve_report(r: Report, approver: User, timestamp_ms: int) -> Report:
-    """Move a Submitted report to Approved. Approver must have sufficient authority."""
-    if r.status is not Status.SUBMITTED:
-        raise ValueError(f"Cannot approve from status {r.status.value}")
-    if not _approver_has_authority(approver, r.amount):
-        raise ValueError(f"Approver {approver.id} limit too low for amount")
-    approved = replace(r, status=Status.APPROVED)
-    return _record_event(approved, Event(timestamp_ms=timestamp_ms, actor_id=approver.id, note="approved"))
+@dataclass(frozen=True)
+class Ok: value: Report
+@dataclass(frozen=True)
+class Err: message: str
+Result = Union[Ok, Err]
+
+def approve_report(r: Report, approver: User, timestamp_ms: int) -> Result:
+    """Move a Submitted report to Approved. Approver must have sufficient authority.
+
+    Matches on r.status. Returns an Err with a specific message for each
+    non-Submitted branch (Draft / Approved / Rejected / Paid). On Submitted,
+    checks approver authority against amount; returns Err if limit too low,
+    otherwise Ok with status transitioned and an "approved" event appended.
+    Errors-as-values, not exceptions — so every call site is forced to
+    branch on the outcome explicitly.
+    """
+    match r.status:
+        case Status.SUBMITTED:
+            if not _approver_has_authority(approver, r.amount):
+                return Err(f"Approver {approver.id} limit too low for amount")
+            approved = replace(r, status=Status.APPROVED)
+            return Ok(_record_event(approved, Event(
+                timestamp_ms=timestamp_ms, actor_id=approver.id, note="approved")))
+        case Status.DRAFT: return Err("Cannot approve a Draft report")
+        case Status.APPROVED: return Err("Report already approved")
+        case Status.REJECTED: return Err("Report was rejected")
+        case Status.PAID: return Err("Report already paid")
 ```
+
+(Full disclosure: the actual `python_from_aver` baseline in this benchmark is a *loose* transliteration — it uses `raise ValueError` instead of Result types and shorter docstrings than this ideal form. So the benchmark measures "loose Aver-in-Python vs Aver"; tightening the transliteration is an open follow-up that would probably push pfa closer to Aver, not further. **Not enforced either way** — no tooling complains if someone strips the docstring, unlike `aver check`.)
 
 **Idiomatic Python** (`python_oop`) — classes with mutation, typed exception hierarchy, `is_submitted` property. Reasoning about the state machine is implicit in the `is_submitted` check and the exception classes; it is not laid out as enumerated branches:
 
