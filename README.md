@@ -51,7 +51,7 @@ Prompts range from specific refactors ("reject negative prices") to vague direct
 
 ```
 1. aver              full    avg=8.64   P=8.44  D=8.83
-2. python_from_aver  full    avg=8.58   P=8.39  D=8.78    ← tie w granicach szumu
+2. python_from_aver  full    avg=8.58   P=8.39  D=8.78    ← tie within rubric noise
 3. python_from_aver  masked  avg=8.33   P=8.00  D=8.67
 4. python_oop        masked  avg=8.25   P=7.83  D=8.67
 5. python_oop        full    avg=8.21   P=7.78  D=8.64
