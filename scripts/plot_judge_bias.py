@@ -566,7 +566,9 @@ def ranking_all_readers_ci(out_path: Path) -> None:
                 (r["judgment_prompt"]["median"] + r["judgment_diff"]["median"]) / 2,
             )
         items = sorted(buckets.items(), key=lambda kv: -mean(kv[1]))
-        labels = [f"{LANG_LABELS[lang]}\n{view}" for (lang, view), _ in items]
+        # Compact labels: short lang + view on separate lines
+        short = {"aver": "Aver", "python_from_aver": "py_from_aver", "python_oop": "py_oop"}
+        labels = [f"{short[lang]}\n{view}" for (lang, view), _ in items]
         values = [mean(v) for _, v in items]
         cis = [ci(v) for _, v in items]
         err_lo = [m - lo for m, (lo, _) in zip(values, cis)]
@@ -574,7 +576,8 @@ def ranking_all_readers_ci(out_path: Path) -> None:
         colors = [LANG_COLORS[lang] for (lang, _), _ in items]
         hatches = ["" if view == "full" else "////" for (_, view), _ in items]
 
-        bars = ax.bar(labels, values, color=colors, edgecolor=SLATE, linewidth=1.0,
+        x_pos = np.arange(len(items))
+        bars = ax.bar(x_pos, values, color=colors, edgecolor=SLATE, linewidth=1.0,
                       yerr=[err_lo, err_hi], ecolor=SLATE, capsize=3,
                       error_kw={"linewidth": 0.9})
         for bar, h in zip(bars, hatches):
@@ -584,8 +587,8 @@ def ranking_all_readers_ci(out_path: Path) -> None:
                     ha="center", va="bottom", fontsize=8, fontweight="bold", color=SLATE)
         ax.set_title(f"{reader} reader", fontweight="bold", fontsize=11)
         ax.set_ylim(7.0, 9.3)
-        ax.tick_params(axis="x", labelrotation=15)
-        plt.setp(ax.get_xticklabels(), ha="right", fontsize=8)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(labels, rotation=0, ha="center", fontsize=8)
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
 
