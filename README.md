@@ -105,11 +105,11 @@ Google Gemini 2.5 Flash (reader):
 
 **Aver wins on the two strongest readers; loses to heavy-doc Python only under the weakest (Gemini Flash).** The top-2 gap under Sonnet is 0.03 points (within rubric noise). Under gpt-4.1 the top-3 span is 0.14 points — essentially a three-way tie. Gemini is the one reader where Python-from-Aver has a clear lead (+0.50 over Aver).
 
-### Ranking with 95% bootstrap CIs (Sonnet reader)
+### Ranking with 95% bootstrap CIs — all 3 readers
 
-![ranking with CI](results/plots/ranking.png)
+![ranking with CI — all 3 readers](results/plots/ranking_all_readers_ci.png)
 
-Error bars are 95% bootstrap confidence intervals over the N=18 per-cell slices (10k resamples). The top-of-ranking intervals overlap substantially — this is the visual form of "parity within noise." Only `python_oop/masked` and below sit clearly lower.
+Error bars are 95% bootstrap confidence intervals over the N=18 per-cell slices (10k resamples). Top-of-ranking intervals overlap on every reader — this is the visual form of "parity within noise." (Sonnet-only version with identical data: `results/plots/ranking.png`.)
 
 ### Full cross-reader comparison
 
@@ -192,6 +192,9 @@ The most likely reason: Aver's prose layer is dense per construct, but Python's 
 
 ### Inter-judge agreement (Krippendorff's α)
 
+![inter-judge Spearman](results/plots/interjudge_heatmap.png)
+
+
 Per-item reliability of the 5-judge ensemble on the existing JSONL (no new API calls). For the 0–10 ordinal rubric, Krippendorff guidelines are: α ≥ 0.80 high, 0.67–0.80 tentative, <0.67 indicates the rubric is not reliable enough for per-item conclusions.
 
 ```
@@ -243,6 +246,8 @@ Python (OOP)      full → masked   ΔP = -0.06   ΔD = -0.03
 The pattern replicates across every reader: `aver/masked` is the lowest-scoring cell of all six under Sonnet (8.07), gpt-4.1 (7.79), and Gemini (7.43). Aver concentrates intent in prose that a reviewer cannot reconstruct from the code alone. Idiomatic OOP Python has very little to lose.
 
 ### Per diff-type — where Aver's payment_ops loss actually lives
+
+![diff-type stratification](results/plots/diff_type_stratification.png)
 
 The 18 prompts are not homogeneous. Hand-classified (see `scripts/diff_type_analysis.py`):
 

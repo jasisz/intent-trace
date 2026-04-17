@@ -543,6 +543,204 @@ def masked_vs_masked_spec(out_path: Path) -> None:
     print(f"wrote: {out_path}")
 
 
+def ranking_all_readers_ci(out_path: Path) -> None:
+    """Per-reader ranking with 95% bootstrap CI — extends ranking.png to all 3 readers."""
+    import random
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5.5), sharey=True)
+    rng = random.Random(0)
+
+    def ci(vals, n=10000):
+        k = len(vals)
+        means = []
+        for _ in range(n):
+            s = [vals[rng.randrange(k)] for _ in range(k)]
+            means.append(sum(s) / k)
+        means.sort()
+        return means[int(n * 0.025)], means[int(n * 0.975)]
+
+    for ax, (reader, path) in zip(axes, READERS.items()):
+        rows = [r for r in load_rows(path) if r.get("view") in ("full", "masked")]
+        buckets = defaultdict(list)
+        for r in rows:
+            buckets[(r["lang"], r["view"])].append(
+                (r["judgment_prompt"]["median"] + r["judgment_diff"]["median"]) / 2,
+            )
+        items = sorted(buckets.items(), key=lambda kv: -mean(kv[1]))
+        labels = [f"{LANG_LABELS[lang]}\n{view}" for (lang, view), _ in items]
+        values = [mean(v) for _, v in items]
+        cis = [ci(v) for _, v in items]
+        err_lo = [m - lo for m, (lo, _) in zip(values, cis)]
+        err_hi = [hi - m for m, (_, hi) in zip(values, cis)]
+        colors = [LANG_COLORS[lang] for (lang, _), _ in items]
+        hatches = ["" if view == "full" else "////" for (_, view), _ in items]
+
+        bars = ax.bar(labels, values, color=colors, edgecolor=SLATE, linewidth=1.0,
+                      yerr=[err_lo, err_hi], ecolor=SLATE, capsize=3,
+                      error_kw={"linewidth": 0.9})
+        for bar, h in zip(bars, hatches):
+            bar.set_hatch(h)
+        for bar, v, ehi in zip(bars, values, err_hi):
+            ax.text(bar.get_x() + bar.get_width() / 2, v + ehi + 0.04, f"{v:.2f}",
+                    ha="center", va="bottom", fontsize=8, fontweight="bold", color=SLATE)
+        ax.set_title(f"{reader} reader", fontweight="bold", fontsize=11)
+        ax.set_ylim(7.0, 9.3)
+        ax.tick_params(axis="x", labelrotation=15)
+        plt.setp(ax.get_xticklabels(), ha="right", fontsize=8)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+
+    axes[0].set_ylabel("Average (P+D)/2 — bars = 95% bootstrap CI", fontweight="bold")
+    fig.suptitle("Per-reader ranking with 95% bootstrap CIs (N=18 per cell, 10k resamples).\n"
+                 "Top-of-ranking intervals overlap on every reader — visual form of 'parity within noise'.",
+                 fontweight="bold", fontsize=11, y=1.02)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, facecolor=BG, bbox_inches="tight")
+    print(f"wrote: {out_path}")
+
+
+DIFF_TYPE = {
+    ("inventory", "atomic_batch_operations"): "architectural",
+    ("inventory", "extract_reservation_module"): "architectural",
+    ("inventory", "make_harder_to_lose_stock"): "vague",
+    ("inventory", "per_warehouse_reorder_points"): "data-model",
+    ("inventory", "track_expiration_dates"): "data-model",
+    ("payment_ops", "add_multi_currency_support"): "additive",
+    ("payment_ops", "atomic_batch_ingest"): "architectural",
+    ("payment_ops", "case_priority_levels"): "additive",
+    ("payment_ops", "event_sourcing_rebuild"): "architectural",
+    ("taskmanager", "add_priority"): "additive",
+    ("taskmanager", "delegate_permissions"): "additive",
+    ("taskmanager", "project_archival"): "additive",
+    ("taskmanager", "task_dependencies"): "additive",
+    ("workflow", "add_withdraw_action"): "additive",
+    ("workflow", "approval_expiration"): "additive",
+    ("workflow", "categorize_rejection_reasons"): "additive",
+    ("workflow", "multi_approver_chain"): "architectural",
+    ("workflow", "separate_audit_from_state"): "architectural",
+}
+
+
+def diff_type_stratification(out_path: Path) -> None:
+    """Pooled category × lang (left) and payment_ops category × lang (right)."""
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
+
+    def collect(filter_prog=None):
+        d = defaultdict(lambda: defaultdict(list))
+        for path in READERS.values():
+            for r in load_rows(path):
+                if r.get("view") != "full":
+                    continue
+                if filter_prog and r["program"] != filter_prog:
+                    continue
+                cat = DIFF_TYPE.get((r["program"], r["prompt"]))
+                if not cat:
+                    continue
+                s = (r["judgment_prompt"]["median"] + r["judgment_diff"]["median"]) / 2
+                d[cat][r["lang"]].append(s)
+        return d
+
+    for ax, (title, data, cats) in zip(
+        axes,
+        [("Pooled across all 4 programs", collect(), ["architectural", "additive", "data-model", "vague"]),
+         ("payment_ops only (the large-program split)", collect("payment_ops"), ["architectural", "additive"])],
+    ):
+        x = np.arange(len(cats))
+        w = 0.26
+        for i, lang in enumerate(LANGS):
+            vals = [mean(data[c][lang]) if data[c][lang] else np.nan for c in cats]
+            ns = [len(data[c][lang]) for c in cats]
+            offset = (i - 1) * w
+            bars = ax.bar(x + offset, vals, w, color=LANG_COLORS[lang],
+                          edgecolor=SLATE, linewidth=1.0, label=LANG_LABELS[lang])
+            for bar, v, n in zip(bars, vals, ns):
+                if not np.isnan(v):
+                    ax.text(bar.get_x() + bar.get_width() / 2, v + 0.03,
+                            f"{v:.2f}\n(n={n})", ha="center", va="bottom",
+                            fontsize=7, color=SLATE)
+        ax.set_xticks(x)
+        ax.set_xticklabels(cats, fontsize=9, fontweight="bold")
+        ax.set_title(title, fontweight="bold", fontsize=11, pad=8)
+        ax.set_ylim(7.0, 9.4)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+
+    axes[0].set_ylabel("Average (P+D)/2, full view", fontweight="bold")
+    axes[0].legend(loc="lower left", fontsize=8, frameon=True,
+                   facecolor=BG, edgecolor=SLATE_LIGHT)
+    fig.suptitle("Aver's payment_ops gap concentrates on architectural refactors (Δ+0.79),\n"
+                 "is much smaller on additive (Δ+0.42). python_oop also drops on architectural — "
+                 "it's docstring volume, not language.",
+                 fontweight="bold", fontsize=11, y=1.02)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, facecolor=BG, bbox_inches="tight")
+    print(f"wrote: {out_path}")
+
+
+def interjudge_heatmap(out_path: Path) -> None:
+    """Two 5×5 Spearman heatmaps (P-axis, D-axis). Shows which judge disagrees
+    with which, pooled across all readers and views."""
+    from itertools import product
+    from scipy.stats import spearmanr
+
+    def pooled_matrix(axis_key):
+        """(n_judges × n_items) matrix pooled across readers+views."""
+        cols = []
+        for path in READERS.values():
+            rows = [r for r in load_rows(path)
+                    if r.get("view") in ("full", "masked", "masked_spec")
+                    and r.get(axis_key, {}).get("individual")]
+            mat = np.full((len(JUDGES), len(rows)), np.nan)
+            for j, judge in enumerate(JUDGES):
+                for i, r in enumerate(rows):
+                    sc = r[axis_key]["individual"].get(judge, {}).get("score", -1)
+                    if sc is not None and sc >= 0:
+                        mat[j, i] = sc
+            cols.append(mat)
+        return np.concatenate(cols, axis=1)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5.5))
+    cmap = mpl.colors.LinearSegmentedColormap.from_list(
+        "aver_corr", ["#f5f5f4", "#fef3c7", AMBER_LIGHT, AMBER, AMBER_DARK],
+    )
+
+    for ax, axis_key, title in [
+        (axes[0], "judgment_prompt", "P-axis (prompt match)"),
+        (axes[1], "judgment_diff", "D-axis (diff fidelity)"),
+    ]:
+        m = pooled_matrix(axis_key)
+        corr = np.full((len(JUDGES), len(JUDGES)), np.nan)
+        for a, b in product(range(len(JUDGES)), repeat=2):
+            mask = ~(np.isnan(m[a]) | np.isnan(m[b]))
+            if mask.sum() >= 3:
+                r, _ = spearmanr(m[a][mask], m[b][mask])
+                corr[a, b] = r
+        im = ax.imshow(corr, cmap=cmap, vmin=0.2, vmax=0.8, aspect="equal")
+        ax.set_xticks(range(len(JUDGES)))
+        ax.set_yticks(range(len(JUDGES)))
+        ax.set_xticklabels(JUDGES, rotation=30, ha="right", fontsize=9)
+        ax.set_yticklabels(JUDGES, fontsize=9)
+        for i in range(len(JUDGES)):
+            for j in range(len(JUDGES)):
+                v = corr[i, j]
+                if not np.isnan(v):
+                    color = "white" if v > 0.6 else SLATE
+                    ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                            fontsize=9, fontweight="bold", color=color)
+        # Family separators: Claude (0..2) vs OpenAI (3..4)
+        ax.axhline(2.5, color=SLATE, linewidth=1.0)
+        ax.axvline(2.5, color=SLATE, linewidth=1.0)
+        ax.set_title(title, fontweight="bold", fontsize=11, pad=8)
+        plt.colorbar(im, ax=ax, shrink=0.7, pad=0.02)
+
+    fig.suptitle("Pairwise Spearman rank correlation between judges (pooled over all readers + views).\n"
+                 "D-axis correlations are visibly weaker — the diff-fidelity rubric is the main "
+                 "source of judge disagreement.",
+                 fontweight="bold", fontsize=11, y=1.02)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, facecolor=BG, bbox_inches="tight")
+    print(f"wrote: {out_path}")
+
+
 def main() -> None:
     out_dir = Path("results/plots")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -554,6 +752,9 @@ def main() -> None:
     program_complexity_advantage(out_dir / "program_complexity_advantage.png")
     program_reader_heatmap(out_dir / "program_reader_heatmap.png")
     masked_vs_masked_spec(out_dir / "masked_vs_masked_spec.png")
+    ranking_all_readers_ci(out_dir / "ranking_all_readers_ci.png")
+    diff_type_stratification(out_dir / "diff_type_stratification.png")
+    interjudge_heatmap(out_dir / "interjudge_heatmap.png")
 
 
 if __name__ == "__main__":
