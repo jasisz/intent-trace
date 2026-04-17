@@ -5,6 +5,20 @@ reports can finally be Paid. Transitions are guarded: submitting requires a
 non-empty title and positive amount; approval is gated by the approver's
 authority limit; payment requires a prior approval. Every transition is
 recorded in an audit trail attached to the report.
+
+Design decisions:
+
+* Status is a closed sum type (Enum), not a string. Expense reports have a
+  small, fixed set of lifecycle states, and closing the type lets the
+  type-checker flag any future code path that forgets to handle one.
+  String-typed status fields would silently accept typos and new values.
+  Alternatives considered: string status codes, integer status codes.
+
+* The audit trail lives inline on the Report record, not in a separate store.
+  Callers routinely need to show who did what when; keeping events on the
+  report keeps replay and explanation queries cheap. A separate audit store
+  would force every consumer to join two sources. Alternatives considered:
+  external audit store, no audit log.
 """
 from __future__ import annotations
 
@@ -62,6 +76,7 @@ def empty_report(report_id: str, submitter_id: str) -> Report:
 
 
 def status_of(r: Report) -> Status:
+    """Return the current lifecycle status of the report."""
     return r.status
 
 
@@ -71,6 +86,7 @@ def events_of(r: Report) -> list[Event]:
 
 
 def _record_event(r: Report, e: Event) -> Report:
+    """Append an event to the report's audit trail."""
     return replace(r, events=r.events + (e,))
 
 
@@ -80,10 +96,12 @@ def with_title_and_amount(r: Report, title: str, amount: Money) -> Report:
 
 
 def amount_is_positive(m: Money) -> bool:
+    """True if the money amount is strictly positive."""
     return m.cents > 0
 
 
 def title_is_present(r: Report) -> bool:
+    """True if the report title is non-empty."""
     return len(r.title) > 0
 
 
@@ -100,6 +118,7 @@ def submit_report(r: Report, actor_id: str, timestamp_ms: int) -> Report:
 
 
 def _approver_has_authority(approver: User, amount: Money) -> bool:
+    """True if the approver's limit covers the report amount."""
     return approver.approval_limit_cents >= amount.cents
 
 
