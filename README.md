@@ -12,7 +12,7 @@ Two headline findings — stated carefully, because most per-cell differences ar
 
 2. **On the largest program (`payment_ops`, ~1300 lines), `python_from_aver` pulls clearly ahead of Aver — by 0.60 on average.** This gap is large and consistent across all three readers. We cannot cleanly attribute it to language format alone, because the `python_from_aver` baseline on `payment_ops` carries more prose (docstrings + inline comments) than the Aver prose for the same program — see the baseline density table below. The finding is real ("Aver loses on the 1300-line domain"), but the causal story ("prose volume vs prose format") is confounded by baseline inconsistency across programs.
 
-Across all readers and program sizes, Aver depends heavily on its prose layer (`intent`, `decision`, `?`, `verify`) — masking it produces the largest ablation drop of any variant, and `aver/masked` is the weakest cell of the six on every reader.
+Across all readers and program sizes, Aver depends heavily on its **narrative prose layer** (`intent`, `decision`, `?`) — masking it produces the largest ablation drop of any variant, and `aver/masked` is the weakest cell on every reader. A follow-up ablation preserving `verify` blocks (executable spec) found they carry almost no legibility signal on top of the narrative layer — the drop comes from prose, not spec.
 
 **What this benchmark measures, precisely.** How well an LLM reviewer reconstructs the *intent of a change* from a unified diff — nothing about whole-program comprehension, production readability, or human-in-the-loop review. The claim is narrow, and that narrowness is why the results are measurable at all.
 
@@ -34,7 +34,8 @@ For each `(program, prompt, language, view)` cell, an agent applies the change r
 - **full** — the unified diff as a PR reviewer sees it (before/after, 3 lines of context around changes).
 - **masked** — same diff, but with the **prose layer stripped**: in Aver that's `intent = …`, `decision …`, `? "…"` descriptions, and `verify …` blocks; in Python that's docstrings and `#` comments. Ablation tells us what each language's prose layer actually transmits.
 
-  **Caveat on `verify` blocks.** Aver `verify` is an executable specification — closer to a Python `assert` than to a docstring. Stripping it therefore mixes "narrative prose" with "spec" in a way that is asymmetric across languages (Python `assert` statements are *not* stripped in the masked view). This penalizes Aver's masked score by a hard-to-separate amount. A follow-up `aver/masked_keep_verify` view is wired into `intent_trace/mask.py` for future runs to disentangle these; current dataset still uses the stricter strip.
+  **Caveat on `verify` blocks.** Aver `verify` is an executable specification — closer to a Python `assert` than to a docstring. Stripping it therefore mixes "narrative prose" with "spec" in a way that is asymmetric across languages (Python `assert` statements are *not* stripped in the masked view). We ran a follow-up view `masked_spec` that preserves `verify` while still stripping `intent`/`decision`/`?` prose (for Python it's identical to `masked` since `assert` was never stripped — useful as a replication-noise control).
+- **masked_spec** — narrative prose stripped, executable spec (`verify`/`assert`) preserved. The difference between `masked` and `masked_spec` isolates how much signal the spec layer carried.
 
 ### Three language variants
 
@@ -211,6 +212,30 @@ Python (OOP)      full → masked   ΔP = -0.06   ΔD = -0.03
 
 The pattern replicates across every reader: `aver/masked` is the lowest-scoring cell of all six under Sonnet (8.07), gpt-4.1 (7.79), and Gemini (7.43). Aver concentrates intent in prose that a reviewer cannot reconstruct from the code alone. Idiomatic OOP Python has very little to lose.
 
+### Verify-preserving ablation (`masked_spec` vs `masked`)
+
+![masked vs masked_spec](results/plots/masked_vs_masked_spec.png)
+
+
+Addresses a reviewer concern that stripping Aver's `verify` blocks is asymmetric vs Python (which keeps `assert`). The `masked_spec` view preserves executable spec but still strips narrative. For Python variants the diff is identical to `masked` — same inputs rerun through LLM-B and the judge panel, which gives us a **replication-noise floor** for free.
+
+```
+reader    lang                 masked   masked_spec   Δ (spec − masked)
+Sonnet    aver                   8.07       8.08           +0.01
+          python_from_aver       8.32       8.44           +0.12   ← replication noise
+          python_oop             8.22       8.12           -0.10   ← replication noise
+gpt-4.1   aver                   7.79       7.90           +0.11
+          python_from_aver       8.17       8.26           +0.10
+          python_oop             8.38       8.14           -0.24   ← largest noise
+Gemini    aver                   7.43       7.26           -0.17
+          python_from_aver       7.92       7.97           +0.06
+          python_oop             7.89       7.88           -0.01
+```
+
+**Takeaway.** Replication noise alone produces deltas from −0.24 to +0.12 on Python variants (where the diffs are byte-identical between views — the only variance is stochastic LLM-B and judge output). That sets a ±0.2 noise floor. Aver's masked → masked_spec delta falls **inside that floor on every reader** (+0.01 / +0.11 / −0.17). Preserving `verify` blocks does not meaningfully recover Aver's score; almost all of Aver's ablation drop is carried by the narrative layer (`intent` / `decision` / `?`), not by `verify`. This is the cleaner framing for the legibility claim: Aver's prose layer is load-bearing, executable spec is not.
+
+The one exception is gpt-4.1 on the P-axis specifically (ΔP spec−masked = +0.33), suggesting gpt-4.1 does extract some intent signal from `verify` blocks when they are preserved — but even that sits at the edge of the noise band.
+
 ## Findings
 
 Read these as statements about the specific setup described above — 3 reader families, 5 judge models spanning 3 vendors, 3 agent-generated baselines, 18 prompts across 4 programs — not as universal claims.
@@ -244,7 +269,7 @@ These are the reasons to treat the numbers as *indicative* rather than *conclusi
 
 1. **Baseline inconsistency across programs.** The biggest threat to the large-program finding. `python_from_aver` was intended as a single transliteration style but drifted: snake_case in inventory/workflow/taskmanager, camelCase in payment_ops; docstring coverage 50% in inventory, 93% in payment_ops. `python_oop` was intended as uniformly sparse (~30–40% docstrings) but payment_ops is 90% docstring + 5936 chars of inline comments. That means **headline #2** ("heavy-doc Python beats Aver on large programs") is confounded with "the large program happens to have the heaviest docstrings." See the density table in *Three language variants* above for exact numbers. A clean rerun would require a single uniform transliteration style.
 
-2. **Masked ablation for Aver strips `verify` blocks.** `verify` is executable spec, not prose — closer to a Python `assert` than to a docstring. Stripping it in the masked view conflates two different abstractions. Python `assert`s are NOT stripped in the Python masked view, so the comparison is asymmetric. The current dataset runs with `verify` stripped (the stricter condition); a follow-up `masked_keep_verify` view is wired into `intent_trace/mask.py`. Our reported aver-masked scores are therefore a lower bound on what they would be under a spec-preserving ablation.
+2. **Masked ablation for Aver strips `verify` blocks — but the follow-up rerun shows this didn't matter.** `verify` is executable spec, not prose. The original `masked` view stripped it; a follow-up `masked_spec` view (preserving `verify`, still stripping `intent`/`decision`/`?`) was run across all three readers and all languages. Aver's `masked → masked_spec` delta is +0.01 / +0.11 / −0.17 across the three readers. The Python variants — where the diff is byte-identical between the two views — give a replication-noise floor of −0.24 to +0.12. Aver's shift sits inside that floor. Preserving `verify` does not meaningfully recover Aver's score. The asymmetry flagged by the reviewer is real but not material: the legibility signal lives in `intent`/`decision`/`?`, not in `verify`.
 
 3. **The benchmark is diff-review, not program comprehension.** We measure how well a reviewer reconstructs the *intent of a change* from a unified diff. We do not measure how well a reviewer understands the *intent of a whole program* given its full source. Aver has affordances for whole-program understanding (module `intent`, `decision` blocks, `aver context` tool) that this benchmark simply does not exercise. A Python-OOP program with a terse diff may still be harder to understand at the program level than an Aver program — that's a different, un-tested question.
 

@@ -483,6 +483,66 @@ def program_reader_heatmap(out_path: Path) -> None:
     print(f"wrote: {out_path}")
 
 
+def masked_vs_masked_spec(out_path: Path) -> None:
+    """3-reader × 3-lang: masked vs masked_spec, with replication-noise floor
+    from Python variants making the Aver delta interpretable."""
+    fig, axes = plt.subplots(1, 3, figsize=(14, 5.5), sharey=True)
+
+    for ax, (reader, path) in zip(axes, READERS.items()):
+        rows = load_rows(path)
+        masked = defaultdict(list)
+        mspec = defaultdict(list)
+        for r in rows:
+            if r.get("view") not in ("masked", "masked_spec"):
+                continue
+            s = (r["judgment_prompt"]["median"] + r["judgment_diff"]["median"]) / 2
+            if r["view"] == "masked":
+                masked[r["lang"]].append(s)
+            else:
+                mspec[r["lang"]].append(s)
+
+        langs = LANGS
+        x = np.arange(len(langs))
+        w = 0.38
+        m_vals = [mean(masked[l]) for l in langs]
+        s_vals = [mean(mspec[l]) for l in langs]
+        deltas = [s - m for m, s in zip(m_vals, s_vals)]
+
+        b1 = ax.bar(x - w / 2, m_vals, w,
+                    color=[LANG_COLORS[l] for l in langs],
+                    edgecolor=SLATE, linewidth=1.0, hatch="////", label="masked")
+        b2 = ax.bar(x + w / 2, s_vals, w,
+                    color=[LANG_COLORS[l] for l in langs],
+                    edgecolor=SLATE, linewidth=1.0, label="masked_spec (keep verify/assert)")
+        for bar, v in zip(b1, m_vals):
+            ax.text(bar.get_x() + bar.get_width() / 2, v + 0.04, f"{v:.2f}",
+                    ha="center", va="bottom", fontsize=8, color=SLATE)
+        for bar, v in zip(b2, s_vals):
+            ax.text(bar.get_x() + bar.get_width() / 2, v + 0.04, f"{v:.2f}",
+                    ha="center", va="bottom", fontsize=8, color=SLATE)
+        for i, d in enumerate(deltas):
+            color = AMBER_DARK if abs(d) >= 0.25 else (AMBER if abs(d) >= 0.1 else SLATE_MUTED)
+            ax.text(i, 7.05, f"Δ {d:+.2f}", ha="center", va="bottom",
+                    fontsize=9, fontweight="bold", color=color)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([LANG_LABELS[l] for l in langs], rotation=12, ha="right", fontsize=9)
+        ax.set_title(f"{reader} reader", fontweight="bold", fontsize=11)
+        ax.set_ylim(7.0, 8.8)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+
+    axes[0].set_ylabel("Average score (P+D)/2", fontweight="bold")
+    axes[-1].legend(loc="lower right", fontsize=8, frameon=True,
+                    facecolor=BG, edgecolor=SLATE_LIGHT)
+    fig.suptitle("Verify-preserving ablation: Python Δ = replication-noise floor (±0.2).\n"
+                 "Aver Δ sits inside that floor on every reader — verify does not carry legibility.",
+                 fontweight="bold", fontsize=11, y=1.02)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, facecolor=BG, bbox_inches="tight")
+    print(f"wrote: {out_path}")
+
+
 def main() -> None:
     out_dir = Path("results/plots")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -493,6 +553,7 @@ def main() -> None:
     program_lang_ranking(out_dir / "program_lang_ranking.png")
     program_complexity_advantage(out_dir / "program_complexity_advantage.png")
     program_reader_heatmap(out_dir / "program_reader_heatmap.png")
+    masked_vs_masked_spec(out_dir / "masked_vs_masked_spec.png")
 
 
 if __name__ == "__main__":
