@@ -1,0 +1,136 @@
+module Validation
+    intent =
+        "Pure permission predicates for the task-manager. Every cross-cutting check"
+        "that operations consult lives here, so that business rules are kept out of the"
+        "operation bodies and can be reviewed on their own. Includes the Critical-only-"
+        "Admin assignment rule so that tasks does not invent its own policy."
+    depends [Models]
+    exposes [isAdmin, isMember, isOwnerOrAdmin, isCritical, canAssign, canAssignAtPriority, canModifyProject, canTransitionTo]
+
+decision RulesPureAndColocated
+    date = "2026-04-17"
+    reason =
+        "Keeping permission checks as named pure functions makes each rule reviewable"
+        "in one place. Inlining them into the operation would spread the same policy"
+        "across several files and make it easy for drift to sneak in."
+    chosen = "PurePredicateModule"
+    rejected = ["InlineChecks", "ClassMethodsOnRecords"]
+    impacts = [canAssign, canAssignAtPriority, canModifyProject, canTransitionTo]
+
+decision CriticalAssignmentRequiresAdmin
+    date = "2026-04-16"
+    reason =
+        "Critical tasks represent escalations whose assignment must be gated by a"
+        "system-wide authority, not by project ownership alone. Exposing a single"
+        "predicate (canAssignAtPriority) keeps Tasks free of priority policy and"
+        "leaves all priority-aware rules in Validation where they can be reviewed."
+    chosen = "PredicateInValidation"
+    rejected = ["InlineInTasks", "RoleCheckDuplicatedAtCallSite"]
+    impacts = [canAssignAtPriority, isCritical]
+
+fn isAdmin(u: User) -> Bool
+    ? "True if the user has Admin role."
+    match u.role
+        Role.Admin -> true
+        Role.Member -> false
+        Role.Viewer -> false
+
+verify isAdmin
+    isAdmin(User(id = "u1", name = "A", role = Role.Admin)) => true
+    isAdmin(User(id = "u2", name = "M", role = Role.Member)) => false
+    isAdmin(User(id = "u3", name = "V", role = Role.Viewer)) => false
+
+fn isMember(p: Project, userId: String) -> Bool
+    ? "True if userId is listed in the project's memberIds."
+    List.contains(p.memberIds, userId)
+
+fn isOwnerOrAdmin(u: User, p: Project) -> Bool
+    ? "True if the user owns the project or has Admin role on the system."
+    match u.id == p.ownerId
+        true -> true
+        false -> isAdmin(u)
+
+fn isCritical(priority: Priority) -> Bool
+    ? "True only for Critical priority — the level that tightens assignment to Admin."
+    match priority
+        Priority.Critical -> true
+        Priority.High -> false
+        Priority.Medium -> false
+        Priority.Low -> false
+
+verify isCritical
+    isCritical(Priority.Critical) => true
+    isCritical(Priority.High) => false
+    isCritical(Priority.Medium) => false
+    isCritical(Priority.Low) => false
+
+fn canAssign(actor: User, project: Project, assignee: User) -> Bool
+    ? "Assigning a task: actor must have write access to the project AND the target"
+      "assignee must already be a project member. This is the baseline rule used by"
+      "non-Critical priorities."
+    match isOwnerOrAdmin(actor, project)
+        false -> false
+        true -> isMember(project, assignee.id)
+
+fn canAssignAtPriority(actor: User, project: Project, assignee: User, priority: Priority) -> Bool
+    ? "Priority-aware assignment rule. For Critical priority the actor must be Admin"
+      "(project ownership alone is not sufficient). For lower priorities the baseline"
+      "canAssign rule applies unchanged."
+    match isCritical(priority)
+        true -> canAssignAdminOnly(actor, project, assignee)
+        false -> canAssign(actor, project, assignee)
+
+fn canAssignAdminOnly(actor: User, project: Project, assignee: User) -> Bool
+    ? "Admin-only variant of canAssign: actor must be Admin and assignee a member."
+    match isAdmin(actor)
+        false -> false
+        true -> isMember(project, assignee.id)
+
+verify canAssignAtPriority
+    canAssignAtPriority(User(id = "u1", name = "A", role = Role.Admin), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1", "u2"]), User(id = "u2", name = "B", role = Role.Member), Priority.Critical) => true
+    canAssignAtPriority(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1", "u2"]), User(id = "u2", name = "B", role = Role.Member), Priority.Critical) => false
+    canAssignAtPriority(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1", "u2"]), User(id = "u2", name = "B", role = Role.Member), Priority.Medium) => true
+    canAssignAtPriority(User(id = "u3", name = "X", role = Role.Viewer), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"]), User(id = "u1", name = "O", role = Role.Member), Priority.Low) => false
+
+fn canModifyProject(actor: User, project: Project) -> Bool
+    ? "Changing project membership or metadata: only owner or Admin."
+    isOwnerOrAdmin(actor, project)
+
+fn canTransitionTo(current: Status, next: Status) -> Bool
+    ? "Allowed Task status transitions."
+    match current
+        Status.Todo -> canFromTodo(next)
+        Status.InProgress -> canFromInProgress(next)
+        Status.Blocked -> canFromBlocked(next)
+        Status.Done -> false
+
+fn canFromTodo(next: Status) -> Bool
+    ? "Allowed next states from Todo."
+    match next
+        Status.InProgress -> true
+        Status.Blocked -> true
+        Status.Todo -> false
+        Status.Done -> false
+
+fn canFromInProgress(next: Status) -> Bool
+    ? "Allowed next states from InProgress."
+    match next
+        Status.Done -> true
+        Status.Blocked -> true
+        Status.Todo -> true
+        Status.InProgress -> false
+
+fn canFromBlocked(next: Status) -> Bool
+    ? "Allowed next states from Blocked."
+    match next
+        Status.InProgress -> true
+        Status.Todo -> true
+        Status.Blocked -> false
+        Status.Done -> false
+
+verify canTransitionTo
+    canTransitionTo(Status.Todo, Status.InProgress) => true
+    canTransitionTo(Status.Todo, Status.Done) => false
+    canTransitionTo(Status.Done, Status.InProgress) => false
+    canTransitionTo(Status.InProgress, Status.Done) => true
+    canTransitionTo(Status.Blocked, Status.InProgress) => true

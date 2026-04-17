@@ -1,0 +1,384 @@
+module Inventory
+    intent =
+        "Multi-warehouse inventory split into two concerns:"
+        "1) a core Inventory of warehouses, SKUs, and on-hand stock with no reservation semantics,"
+        "2) a Reservations layer that wraps the core inventory and tracks pending commitments."
+        "Callers that only move physical stock never touch reservations; callers that accept orders"
+        "use the reservation layer to avoid over-committing the same physical units."
+
+decision SeparateReservationsFromCoreInventory
+    date = "2026-04-16"
+    reason =
+        "The original Inventory record owned both physical on-hand stock and pending reservations."
+        "That conflated two concerns: a warehouse-management view (where are units sitting?) and"
+        "an order-acceptance view (how many units are already promised?). Splitting them lets the"
+        "core inventory stay usable on its own — shipping, receiving, and reporting do not need to"
+        "know reservations exist — while reservations are layered on top as a separate record that"
+        "holds a reference to a core Inventory plus a per-(warehouse, sku) reserved counter."
+    chosen = "ReservationsWrapCore"
+    rejected = ["KeepCombinedRecord", "ReservationsAsSeparateParallelStore", "OptionalReservedField"]
+    impacts = [Inventory, Reservations, reserveStock, fulfillReservation, releaseReservation, availableStock]
+
+decision SeparateAvailableAndReserved
+    date = "2026-04-16"
+    reason =
+        "Reserved stock represents orders that have been accepted but not yet shipped."
+        "Collapsing reserved into available would allow a second reservation to over-commit"
+        "the same physical units. Tracking them separately makes the invariant reserved <= onHand"
+        "checkable at any point."
+    chosen = "SplitAvailableReserved"
+    rejected = ["SingleAvailableCounter", "NegativeAvailableAsReserved"]
+    impacts = [reserveStock, fulfillReservation, releaseReservation, availableStock]
+
+decision ResultOverException
+    date = "2026-04-16"
+    reason =
+        "Invalid operations (unknown warehouse, negative qty, over-reserve) are expected"
+        "at runtime — clients need to branch on them. Errors-as-values keep every call site"
+        "obvious about what can fail."
+    chosen = "ResultReturns"
+    rejected = ["ExceptionsOrPanics", "SilentNoop"]
+    impacts = [receiveShipment, reserveStock, releaseReservation, fulfillReservation, rebalance]
+
+record Sku
+    id: String
+    name: String
+    reorderPoint: Int
+
+record Warehouse
+    id: String
+    location: String
+
+record Inventory
+    skus: Map<String, Sku>
+    warehouses: Map<String, Warehouse>
+    onHand: Map<String, Map<String, Int>>
+
+record Reservations
+    inventory: Inventory
+    reserved: Map<String, Map<String, Int>>
+
+fn emptyInventory() -> Inventory
+    ? "Builds an empty core inventory with no warehouses, skus, or on-hand stock."
+    empty = Map.fromList([])
+    Inventory(skus = empty, warehouses = empty, onHand = empty)
+
+verify emptyInventory
+    Map.len(emptyInventory().warehouses) => 0
+    Map.len(emptyInventory().skus) => 0
+
+fn emptyReservations(inv: Inventory) -> Reservations
+    ? "Wraps a core inventory with an empty reservation ledger."
+    Reservations(inventory = inv, reserved = Map.fromList([]))
+
+verify emptyReservations
+    Map.len(emptyReservations(emptyInventory()).reserved) => 0
+
+fn registerSku(inv: Inventory, s: Sku) -> Inventory
+    ? "Adds or replaces an SKU definition on the core inventory."
+    Inventory.update(inv, skus = Map.set(inv.skus, s.id, s))
+
+fn registerWarehouse(inv: Inventory, w: Warehouse) -> Inventory
+    ? "Adds or replaces a warehouse definition on the core inventory."
+    Inventory.update(inv, warehouses = Map.set(inv.warehouses, w.id, w))
+
+fn getCountFromMap(perSku: Map<String, Int>, skuId: String) -> Int
+    ? "Looks up a per-sku integer count, defaulting to 0 when not present."
+    match Map.get(perSku, skuId)
+        Option.None -> 0
+        Option.Some(n) -> n
+
+verify getCountFromMap
+    getCountFromMap(Map.fromList([]), "S1") => 0
+    getCountFromMap(Map.fromList([("S1", 7)]), "S1") => 7
+
+fn getCount(outer: Map<String, Map<String, Int>>, warehouseId: String, skuId: String) -> Int
+    ? "Generic (warehouse, sku) -> Int lookup used for both on-hand and reserved stock."
+    match Map.get(outer, warehouseId)
+        Option.None -> 0
+        Option.Some(perSku) -> getCountFromMap(perSku, skuId)
+
+verify getCount
+    getCount(Map.fromList([]), "W1", "S1") => 0
+
+fn perSkuMap(outer: Map<String, Map<String, Int>>, warehouseId: String) -> Map<String, Int>
+    ? "Returns the existing per-sku submap for a warehouse, or a new empty map."
+    match Map.get(outer, warehouseId)
+        Option.None -> Map.fromList([])
+        Option.Some(m) -> m
+
+verify perSkuMap
+    Map.len(perSkuMap(Map.fromList([]), "W1")) => 0
+
+fn setCount(outer: Map<String, Map<String, Int>>, warehouseId: String, skuId: String, n: Int) -> Map<String, Map<String, Int>>
+    ? "Stores n for (warehouse, sku) in a nested Map. Overwrites any previous value."
+    Map.set(outer, warehouseId, Map.set(perSkuMap(outer, warehouseId), skuId, n))
+
+verify setCount
+    getCount(setCount(Map.fromList([]), "W1", "S1", 5), "W1", "S1") => 5
+
+fn onHandStock(inv: Inventory, warehouseId: String, skuId: String) -> Int
+    ? "Returns the physical units on hand at (warehouse, sku), or 0 if none recorded yet."
+    getCount(inv.onHand, warehouseId, skuId)
+
+verify onHandStock
+    onHandStock(emptyInventory(), "W1", "S1") => 0
+
+fn reservedStock(res: Reservations, warehouseId: String, skuId: String) -> Int
+    ? "Returns the units currently reserved at (warehouse, sku) in the reservation ledger."
+    getCount(res.reserved, warehouseId, skuId)
+
+verify reservedStock
+    reservedStock(emptyReservations(emptyInventory()), "W1", "S1") => 0
+
+fn availableStock(res: Reservations, warehouseId: String, skuId: String) -> Int
+    ? "Returns units currently available for new reservations: onHand minus reserved."
+    onHandStock(res.inventory, warehouseId, skuId) - reservedStock(res, warehouseId, skuId)
+
+verify availableStock
+    availableStock(emptyReservations(emptyInventory()), "W1", "S1") => 0
+
+fn knownWarehouse(inv: Inventory, warehouseId: String) -> Bool
+    ? "Returns true if the warehouse has been registered on the core inventory."
+    match Map.get(inv.warehouses, warehouseId)
+        Option.None -> false
+        Option.Some(_) -> true
+
+verify knownWarehouse
+    knownWarehouse(emptyInventory(), "W1") => false
+
+fn knownSku(inv: Inventory, skuId: String) -> Bool
+    ? "Returns true if the sku has been registered on the core inventory."
+    match Map.get(inv.skus, skuId)
+        Option.None -> false
+        Option.Some(_) -> true
+
+verify knownSku
+    knownSku(emptyInventory(), "S1") => false
+
+fn applyReceive(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: adds qty to onHand at (warehouse, sku). Assumes inputs are valid."
+    current = onHandStock(inv, warehouseId, skuId)
+    Inventory.update(inv, onHand = setCount(inv.onHand, warehouseId, skuId, current + qty))
+
+verify applyReceive
+    onHandStock(applyReceive(emptyInventory(), "W1", "S1", 4), "W1", "S1") => 4
+
+fn receiveShipmentChecked(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Receives a shipment assuming qty is positive. Checks warehouse and sku are known."
+    match knownWarehouse(inv, warehouseId)
+        false -> Result.Err("Unknown warehouse: {warehouseId}")
+        true -> match knownSku(inv, skuId)
+            false -> Result.Err("Unknown sku: {skuId}")
+            true -> Result.Ok(applyReceive(inv, warehouseId, skuId, qty))
+
+verify receiveShipmentChecked
+    receiveShipmentChecked(emptyInventory(), "W1", "S1", 1) => Result.Err("Unknown warehouse: W1")
+
+fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Adds qty to onHand. Fails on unknown warehouse/sku or non-positive qty."
+      "Works on the core Inventory directly — callers who never reserve never see reservations."
+    match qty <= 0
+        true -> Result.Err("Shipment qty must be positive")
+        false -> receiveShipmentChecked(inv, warehouseId, skuId, qty)
+
+verify receiveShipment
+    receiveShipment(emptyInventory(), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
+    receiveShipment(emptyInventory(), "W1", "S1", 0) => Result.Err("Shipment qty must be positive")
+
+fn applyRebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: moves qty of stock from 'fromId' to 'toId'. Assumes source has qty available."
+    fromOn = onHandStock(inv, fromId, skuId)
+    toOn = onHandStock(inv, toId, skuId)
+    withFrom = Inventory.update(inv, onHand = setCount(inv.onHand, fromId, skuId, fromOn - qty))
+    Inventory.update(withFrom, onHand = setCount(withFrom.onHand, toId, skuId, toOn + qty))
+
+verify applyRebalance
+    onHandStock(applyRebalance(applyReceive(emptyInventory(), "W1", "S1", 5), "W1", "W2", "S1", 2), "W2", "S1") => 2
+
+fn rebalanceIfAvailable(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Rebalances after checking the source warehouse has enough on-hand stock."
+    avail = onHandStock(inv, fromId, skuId)
+    match qty > avail
+        true -> Result.Err("Insufficient stock at {fromId}: need {qty}, have {avail}")
+        false -> Result.Ok(applyRebalance(inv, fromId, toId, skuId, qty))
+
+verify rebalanceIfAvailable
+    rebalanceIfAvailable(emptyInventory(), "W1", "W2", "S1", 3) => Result.Err("Insufficient stock at W1: need 3, have 0")
+
+fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Rebalances after warehouse and sku validation."
+    match knownWarehouse(inv, fromId)
+        false -> Result.Err("Unknown warehouse: {fromId}")
+        true -> match knownWarehouse(inv, toId)
+            false -> Result.Err("Unknown warehouse: {toId}")
+            true -> match knownSku(inv, skuId)
+                false -> Result.Err("Unknown sku: {skuId}")
+                true -> rebalanceIfAvailable(inv, fromId, toId, skuId, qty)
+
+verify rebalanceChecked
+    rebalanceChecked(emptyInventory(), "W1", "W2", "S1", 1) => Result.Err("Unknown warehouse: W1")
+
+fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Transfers qty of stock from 'fromId' warehouse to 'toId' warehouse. Pure core operation — no reservations."
+    match qty <= 0
+        true -> Result.Err("Rebalance qty must be positive")
+        false -> rebalanceChecked(inv, fromId, toId, skuId, qty)
+
+verify rebalance
+    rebalance(emptyInventory(), "W1", "W2", "S1", 0) => Result.Err("Rebalance qty must be positive")
+
+fn sumOnHandAcc(inv: Inventory, skuId: String, warehouseIds: List<String>, acc: Int) -> Int
+    ? "Tail-recursive accumulator helper used by sumOnHand."
+    match warehouseIds
+        [] -> acc
+        [wid, ..rest] -> sumOnHandAcc(inv, skuId, rest, acc + onHandStock(inv, wid, skuId))
+
+verify sumOnHandAcc
+    sumOnHandAcc(emptyInventory(), "S1", [], 0) => 0
+
+fn sumOnHand(inv: Inventory, skuId: String, warehouseIds: List<String>) -> Int
+    ? "Folds onHand across warehouse ids. Helper for totalOnHand."
+    sumOnHandAcc(inv, skuId, warehouseIds, 0)
+
+verify sumOnHand
+    sumOnHand(emptyInventory(), "S1", []) => 0
+
+fn totalOnHand(inv: Inventory, skuId: String) -> Int
+    ? "Sums onHand across all warehouses for this sku. Reads only the core inventory."
+    sumOnHand(inv, skuId, Map.keys(inv.warehouses))
+
+verify totalOnHand
+    totalOnHand(emptyInventory(), "S1") => 0
+
+fn reorderPointForSku(inv: Inventory, skuId: String) -> Option<Int>
+    ? "Looks up the reorder point of a registered sku."
+    match Map.get(inv.skus, skuId)
+        Option.None -> Option.None
+        Option.Some(sku) -> Option.Some(sku.reorderPoint)
+
+verify reorderPointForSku
+    reorderPointForSku(emptyInventory(), "S1") => Option.None
+
+fn needsReorder(res: Reservations, warehouseId: String, skuId: String) -> Bool
+    ? "True when available stock (onHand minus reserved) at this warehouse falls at or below the sku's reorder point."
+    match reorderPointForSku(res.inventory, skuId)
+        Option.None -> false
+        Option.Some(rp) -> availableStock(res, warehouseId, skuId) <= rp
+
+verify needsReorder
+    needsReorder(emptyReservations(emptyInventory()), "W1", "S1") => false
+
+fn withInventory(res: Reservations, inv: Inventory) -> Reservations
+    ? "Replaces the core inventory inside a reservations record, keeping the reserved ledger intact."
+    Reservations.update(res, inventory = inv)
+
+verify withInventory
+    withInventory(emptyReservations(emptyInventory()), emptyInventory()).inventory => emptyInventory()
+
+fn applyReserve(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Reservations
+    ? "Unchecked: adds qty to the reserved ledger. Assumes inputs valid and sufficient stock."
+    current = reservedStock(res, warehouseId, skuId)
+    Reservations.update(res, reserved = setCount(res.reserved, warehouseId, skuId, current + qty))
+
+verify applyReserve
+    reservedStock(applyReserve(emptyReservations(emptyInventory()), "W1", "S1", 3), "W1", "S1") => 3
+
+fn reserveIfAvailable(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
+    ? "Reserves qty once we've confirmed enough is available (onHand - reserved)."
+    avail = availableStock(res, warehouseId, skuId)
+    match qty > avail
+        true -> Result.Err("Insufficient available stock: need {qty}, have {avail}")
+        false -> Result.Ok(applyReserve(res, warehouseId, skuId, qty))
+
+verify reserveIfAvailable
+    reserveIfAvailable(emptyReservations(emptyInventory()), "W1", "S1", 1) => Result.Err("Insufficient available stock: need 1, have 0")
+
+fn reserveStockChecked(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
+    ? "Reserves after warehouse+sku validation. Delegates to reserveIfAvailable."
+    match knownWarehouse(res.inventory, warehouseId)
+        false -> Result.Err("Unknown warehouse: {warehouseId}")
+        true -> match knownSku(res.inventory, skuId)
+            false -> Result.Err("Unknown sku: {skuId}")
+            true -> reserveIfAvailable(res, warehouseId, skuId, qty)
+
+verify reserveStockChecked
+    reserveStockChecked(emptyReservations(emptyInventory()), "W1", "S1", 1) => Result.Err("Unknown warehouse: W1")
+
+fn reserveStock(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
+    ? "Reserves qty for an order. Fails if qty would exceed available (onHand - reserved)."
+    match qty <= 0
+        true -> Result.Err("Reserve qty must be positive")
+        false -> reserveStockChecked(res, warehouseId, skuId, qty)
+
+verify reserveStock
+    reserveStock(emptyReservations(emptyInventory()), "W1", "S1", 0) => Result.Err("Reserve qty must be positive")
+    reserveStock(emptyReservations(emptyInventory()), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
+
+fn applyRelease(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Reservations
+    ? "Unchecked: subtracts qty from the reserved ledger. Assumes qty <= current reserved."
+    current = reservedStock(res, warehouseId, skuId)
+    Reservations.update(res, reserved = setCount(res.reserved, warehouseId, skuId, current - qty))
+
+verify applyRelease
+    reservedStock(applyRelease(applyReserve(emptyReservations(emptyInventory()), "W1", "S1", 5), "W1", "S1", 2), "W1", "S1") => 3
+
+fn releaseIfReserved(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
+    ? "Releases qty from reserved, failing if qty exceeds what is currently reserved."
+    current = reservedStock(res, warehouseId, skuId)
+    match qty > current
+        true -> Result.Err("Cannot release more than reserved: requested {qty}, reserved {current}")
+        false -> Result.Ok(applyRelease(res, warehouseId, skuId, qty))
+
+verify releaseIfReserved
+    releaseIfReserved(emptyReservations(emptyInventory()), "W1", "S1", 1) => Result.Err("Cannot release more than reserved: requested 1, reserved 0")
+
+fn releaseReservation(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
+    ? "Cancels a previously made reservation. Fails if qty exceeds current reserved."
+    match qty <= 0
+        true -> Result.Err("Release qty must be positive")
+        false -> releaseIfReserved(res, warehouseId, skuId, qty)
+
+verify releaseReservation
+    releaseReservation(emptyReservations(emptyInventory()), "W1", "S1", 0) => Result.Err("Release qty must be positive")
+
+fn applyFulfill(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Reservations
+    ? "Unchecked: subtracts qty from both the core onHand and the reserved ledger."
+    curOn = onHandStock(res.inventory, warehouseId, skuId)
+    curRes = reservedStock(res, warehouseId, skuId)
+    invAfter = Inventory.update(res.inventory, onHand = setCount(res.inventory.onHand, warehouseId, skuId, curOn - qty))
+    resAfter = setCount(res.reserved, warehouseId, skuId, curRes - qty)
+    Reservations(inventory = invAfter, reserved = resAfter)
+
+verify applyFulfill
+    reservedStock(applyFulfill(applyReserve(emptyReservations(applyReceive(emptyInventory(), "W1", "S1", 5)), "W1", "S1", 3), "W1", "S1", 2), "W1", "S1") => 1
+
+fn fulfillIfReserved(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
+    ? "Ships qty, failing if qty exceeds what is currently reserved at this (warehouse, sku)."
+    current = reservedStock(res, warehouseId, skuId)
+    match qty > current
+        true -> Result.Err("Cannot fulfill more than reserved: requested {qty}, reserved {current}")
+        false -> Result.Ok(applyFulfill(res, warehouseId, skuId, qty))
+
+verify fulfillIfReserved
+    fulfillIfReserved(emptyReservations(emptyInventory()), "W1", "S1", 1) => Result.Err("Cannot fulfill more than reserved: requested 1, reserved 0")
+
+fn fulfillReservation(res: Reservations, warehouseId: String, skuId: String, qty: Int) -> Result<Reservations, String>
+    ? "Ships qty out: removes it from both reserved and onHand. Fails if qty exceeds reserved."
+    match qty <= 0
+        true -> Result.Err("Fulfill qty must be positive")
+        false -> fulfillIfReserved(res, warehouseId, skuId, qty)
+
+verify fulfillReservation
+    fulfillReservation(emptyReservations(emptyInventory()), "W1", "S1", 0) => Result.Err("Fulfill qty must be positive")
+
+fn main() -> Unit
+    ! [Console.print]
+    inv = emptyInventory()
+    inv1 = registerWarehouse(inv, Warehouse(id = "W1", location = "NYC"))
+    inv2 = registerSku(inv1, Sku(id = "S1", name = "Widget", reorderPoint = 10))
+    res = emptyReservations(inv2)
+    Console.print("Initial available:")
+    Console.print(availableStock(res, "W1", "S1"))
+    Console.print("Shipment of 20:")
+    Console.print(receiveShipment(inv2, "W1", "S1", 20))

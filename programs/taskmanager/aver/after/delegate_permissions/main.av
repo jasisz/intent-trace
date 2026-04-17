@@ -1,0 +1,40 @@
+module Main
+    intent =
+        "Entry-point demo wiring users, a project, and a task through the full API."
+        "Exercises the new delegation flow: the owner grants Bob a delegation, Bob"
+        "uses owner-level rights to add a new member, then the owner revokes."
+    depends [Models, Projects, Tasks]
+
+fn main() -> Unit
+    ! [Console.print]
+    alice = User(id = "u1", name = "Alice", role = Role.Admin)
+    bob = User(id = "u2", name = "Bob", role = Role.Member)
+    project = Projects.createProject("p1", "Launch", alice)
+    withBob = Projects.addMember(alice, project, "u2")
+    Console.print("Project after addMember:")
+    Console.print(withBob)
+    delegated = Projects.grantDelegation(alice, project, "u2")
+    Console.print("Project after grantDelegation:")
+    Console.print(delegated)
+    bobAdds = bobAddsCarol(bob, delegated)
+    Console.print("Project after delegate Bob adds Carol:")
+    Console.print(bobAdds)
+    revoked = revokeFromResult(alice, delegated, "u2")
+    Console.print("Project after revokeDelegation:")
+    Console.print(revoked)
+    task = Tasks.createTask("t1", "p1", "Write docs", alice)
+    assigned = Tasks.assignTask(alice, project, task, bob)
+    Console.print("Task after assign:")
+    Console.print(assigned)
+
+fn bobAddsCarol(bob: User, delegated: Result<Project, String>) -> Result<Project, String>
+    ? "Threads the delegated-project Result into a second addMember call made by Bob."
+    match delegated
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(p) -> Projects.addMember(bob, p, "u3")
+
+fn revokeFromResult(owner: User, delegated: Result<Project, String>, delegateId: String) -> Result<Project, String>
+    ? "Threads the delegated-project Result into a revokeDelegation call by the owner."
+    match delegated
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(p) -> Projects.revokeDelegation(owner, p, delegateId)

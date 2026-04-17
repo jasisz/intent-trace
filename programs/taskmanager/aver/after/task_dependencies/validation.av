@@ -1,0 +1,153 @@
+module Validation
+    intent =
+        "Pure permission predicates for the task-manager. Every cross-cutting check"
+        "that operations consult lives here, so that business rules are kept out of the"
+        "operation bodies and can be reviewed on their own. Transition rules also know"
+        "about task dependencies: moving to Done requires every dependency task Done."
+    depends [Models]
+    exposes [isAdmin, isMember, isOwnerOrAdmin, canAssign, canModifyProject, canTransitionTo, canTransitionToWithDeps, blockingDependencyIds]
+
+decision RulesPureAndColocated
+    date = "2026-04-17"
+    reason =
+        "Keeping permission checks as named pure functions makes each rule reviewable"
+        "in one place. Inlining them into the operation would spread the same policy"
+        "across several files and make it easy for drift to sneak in."
+    chosen = "PurePredicateModule"
+    rejected = ["InlineChecks", "ClassMethodsOnRecords"]
+    impacts = [canAssign, canModifyProject, canTransitionTo, canTransitionToWithDeps]
+
+decision DependencyCheckAtCallSite
+    date = "2026-04-16"
+    reason =
+        "Validation stays pure and takes the dependency tasks as a parameter at the"
+        "call site instead of looking them up by id. Tasks module knows how to resolve"
+        "ids to records; Validation only decides."
+    chosen = "PassResolvedDepsAsList"
+    rejected = ["FetchDepsInsideValidation", "StoreDepStatusOnTask"]
+    impacts = [canTransitionToWithDeps, blockingDependencyIds]
+
+fn isAdmin(u: User) -> Bool
+    ? "True if the user has Admin role."
+    match u.role
+        Role.Admin -> true
+        Role.Member -> false
+        Role.Viewer -> false
+
+verify isAdmin
+    isAdmin(User(id = "u1", name = "A", role = Role.Admin)) => true
+    isAdmin(User(id = "u2", name = "M", role = Role.Member)) => false
+    isAdmin(User(id = "u3", name = "V", role = Role.Viewer)) => false
+
+fn isMember(p: Project, userId: String) -> Bool
+    ? "True if userId is listed in the project's memberIds."
+    List.contains(p.memberIds, userId)
+
+fn isOwnerOrAdmin(u: User, p: Project) -> Bool
+    ? "True if the user owns the project or has Admin role on the system."
+    match u.id == p.ownerId
+        true -> true
+        false -> isAdmin(u)
+
+fn canAssign(actor: User, project: Project, assignee: User) -> Bool
+    ? "Assigning a task: actor must have write access to the project AND the target"
+      "assignee must already be a project member."
+    match isOwnerOrAdmin(actor, project)
+        false -> false
+        true -> isMember(project, assignee.id)
+
+fn canModifyProject(actor: User, project: Project) -> Bool
+    ? "Changing project membership or metadata: only owner or Admin."
+    isOwnerOrAdmin(actor, project)
+
+fn canTransitionTo(current: Status, next: Status) -> Bool
+    ? "Allowed Task status transitions ignoring dependencies. Used for transitions"
+      "that do not target Done; the Done case is routed through canTransitionToWithDeps."
+    match current
+        Status.Todo -> canFromTodo(next)
+        Status.InProgress -> canFromInProgress(next)
+        Status.Blocked -> canFromBlocked(next)
+        Status.Done -> false
+
+verify canTransitionTo
+    canTransitionTo(Status.Todo, Status.InProgress) => true
+    canTransitionTo(Status.Todo, Status.Done) => false
+    canTransitionTo(Status.Done, Status.InProgress) => false
+    canTransitionTo(Status.InProgress, Status.Done) => true
+    canTransitionTo(Status.Blocked, Status.InProgress) => true
+
+fn canFromTodo(next: Status) -> Bool
+    ? "Allowed next states from Todo."
+    match next
+        Status.InProgress -> true
+        Status.Blocked -> true
+        Status.Todo -> false
+        Status.Done -> false
+
+fn canFromInProgress(next: Status) -> Bool
+    ? "Allowed next states from InProgress."
+    match next
+        Status.Done -> true
+        Status.Blocked -> true
+        Status.Todo -> true
+        Status.InProgress -> false
+
+fn canFromBlocked(next: Status) -> Bool
+    ? "Allowed next states from Blocked."
+    match next
+        Status.InProgress -> true
+        Status.Todo -> true
+        Status.Blocked -> false
+        Status.Done -> false
+
+fn isDone(t: Task) -> Bool
+    ? "True if the task is currently Done."
+    match t.status
+        Status.Done -> true
+        Status.Todo -> false
+        Status.InProgress -> false
+        Status.Blocked -> false
+
+fn allDone(deps: List<Task>) -> Bool
+    ? "True when every task in deps is Done."
+    match deps
+        [] -> true
+        [h, ..t] -> match isDone(h)
+            false -> false
+            true -> allDone(t)
+
+verify allDone
+    allDone([]) => true
+    allDone([Task(id = "a", projectId = "p", title = "A", status = Status.Done, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = [])]) => true
+    allDone([Task(id = "a", projectId = "p", title = "A", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = [])]) => false
+
+fn blockingDependencyIds(deps: List<Task>) -> List<String>
+    ? "Returns ids of dependency tasks that are not yet Done, preserving input order."
+    match deps
+        [] -> []
+        [h, ..t] -> match isDone(h)
+            true -> blockingDependencyIds(t)
+            false -> List.prepend(h.id, blockingDependencyIds(t))
+
+verify blockingDependencyIds
+    blockingDependencyIds([]) => []
+    blockingDependencyIds([Task(id = "a", projectId = "p", title = "A", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = [])]) => ["a"]
+    blockingDependencyIds([Task(id = "a", projectId = "p", title = "A", status = Status.Done, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = [])]) => []
+
+fn canTransitionToWithDeps(current: Status, next: Status, deps: List<Task>) -> Bool
+    ? "Full transition check. Identical to canTransitionTo except that a move to Done"
+      "also requires every dependency task to be Done."
+    match canTransitionTo(current, next)
+        false -> false
+        true -> match next
+            Status.Done -> allDone(deps)
+            Status.Todo -> true
+            Status.InProgress -> true
+            Status.Blocked -> true
+
+verify canTransitionToWithDeps
+    canTransitionToWithDeps(Status.InProgress, Status.Done, []) => true
+    canTransitionToWithDeps(Status.InProgress, Status.Done, [Task(id = "a", projectId = "p", title = "A", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = [])]) => false
+    canTransitionToWithDeps(Status.InProgress, Status.Done, [Task(id = "a", projectId = "p", title = "A", status = Status.Done, assigneeId = Option.None, createdByUserId = "u", dependsOnIds = [])]) => true
+    canTransitionToWithDeps(Status.Todo, Status.InProgress, []) => true
+    canTransitionToWithDeps(Status.Done, Status.InProgress, []) => false

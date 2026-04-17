@@ -1,0 +1,118 @@
+module Validation
+    intent =
+        "Pure permission predicates for the task-manager. Every cross-cutting check"
+        "that operations consult lives here, so that business rules are kept out of the"
+        "operation bodies and can be reviewed on their own. A project-modifying"
+        "operation is allowed for the owner, any Admin, or any user currently listed"
+        "as a delegate on that specific project."
+    depends [Models]
+    exposes [isAdmin, isMember, isDelegated, isOwnerOrAdmin, canAssign, canModifyProject, canTransitionTo]
+
+decision RulesPureAndColocated
+    date = "2026-04-17"
+    reason =
+        "Keeping permission checks as named pure functions makes each rule reviewable"
+        "in one place. Inlining them into the operation would spread the same policy"
+        "across several files and make it easy for drift to sneak in."
+    chosen = "PurePredicateModule"
+    rejected = ["InlineChecks", "ClassMethodsOnRecords"]
+    impacts = [canAssign, canModifyProject, canTransitionTo]
+
+decision DelegationGoesThroughCanModifyProject
+    date = "2026-04-16"
+    reason =
+        "canModifyProject is the single gate that every project-modifying operation"
+        "already consults, so extending it to accept delegates means every such"
+        "operation picks up delegation support without edits. isOwnerOrAdmin keeps"
+        "its original, narrower meaning so callers that specifically want the"
+        "role-based check can still ask for it."
+    chosen = "ExtendCanModifyProjectOnly"
+    rejected = ["WideIsOwnerOrAdmin", "PerOperationDelegationCheck"]
+    impacts = [canModifyProject, isDelegated]
+
+fn isAdmin(u: User) -> Bool
+    ? "True if the user has Admin role."
+    match u.role
+        Role.Admin -> true
+        Role.Member -> false
+        Role.Viewer -> false
+
+verify isAdmin
+    isAdmin(User(id = "u1", name = "A", role = Role.Admin)) => true
+    isAdmin(User(id = "u2", name = "M", role = Role.Member)) => false
+    isAdmin(User(id = "u3", name = "V", role = Role.Viewer)) => false
+
+fn isMember(p: Project, userId: String) -> Bool
+    ? "True if userId is listed in the project's memberIds."
+    List.contains(p.memberIds, userId)
+
+fn isDelegated(p: Project, userId: String) -> Bool
+    ? "True if userId currently holds a delegation on this project."
+    List.contains(p.delegateIds, userId)
+
+fn isOwnerOrAdmin(u: User, p: Project) -> Bool
+    ? "True if the user owns the project or has Admin role on the system."
+      "Does not consider project-scoped delegations — for that, use canModifyProject."
+    match u.id == p.ownerId
+        true -> true
+        false -> isAdmin(u)
+
+fn canAssign(actor: User, project: Project, assignee: User) -> Bool
+    ? "Assigning a task: actor must have write access to the project AND the target"
+      "assignee must already be a project member."
+    match canModifyProject(actor, project)
+        false -> false
+        true -> isMember(project, assignee.id)
+
+fn canModifyProject(actor: User, project: Project) -> Bool
+    ? "Changing project membership or metadata: owner, Admin, or any user the owner"
+      "has granted a delegation to on this specific project."
+    match isOwnerOrAdmin(actor, project)
+        true -> true
+        false -> isDelegated(project, actor.id)
+
+verify canModifyProject
+    canModifyProject(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = [])) => true
+    canModifyProject(User(id = "u9", name = "A", role = Role.Admin), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = [])) => true
+    canModifyProject(User(id = "u2", name = "D", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"])) => true
+    canModifyProject(User(id = "u2", name = "M", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1", "u2"], delegateIds = [])) => false
+    canModifyProject(User(id = "u3", name = "V", role = Role.Viewer), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"])) => false
+
+fn canTransitionTo(current: Status, next: Status) -> Bool
+    ? "Allowed Task status transitions."
+    match current
+        Status.Todo -> canFromTodo(next)
+        Status.InProgress -> canFromInProgress(next)
+        Status.Blocked -> canFromBlocked(next)
+        Status.Done -> false
+
+fn canFromTodo(next: Status) -> Bool
+    ? "Allowed next states from Todo."
+    match next
+        Status.InProgress -> true
+        Status.Blocked -> true
+        Status.Todo -> false
+        Status.Done -> false
+
+fn canFromInProgress(next: Status) -> Bool
+    ? "Allowed next states from InProgress."
+    match next
+        Status.Done -> true
+        Status.Blocked -> true
+        Status.Todo -> true
+        Status.InProgress -> false
+
+fn canFromBlocked(next: Status) -> Bool
+    ? "Allowed next states from Blocked."
+    match next
+        Status.InProgress -> true
+        Status.Todo -> true
+        Status.Blocked -> false
+        Status.Done -> false
+
+verify canTransitionTo
+    canTransitionTo(Status.Todo, Status.InProgress) => true
+    canTransitionTo(Status.Todo, Status.Done) => false
+    canTransitionTo(Status.Done, Status.InProgress) => false
+    canTransitionTo(Status.InProgress, Status.Done) => true
+    canTransitionTo(Status.Blocked, Status.InProgress) => true

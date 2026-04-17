@@ -1,0 +1,529 @@
+module Inventory
+    intent =
+        "Multi-warehouse inventory with per-SKU stock levels, reservations, and reorder policy."
+        "Separates available stock from reserved stock so that pending orders do not silently"
+        "over-commit. Operations return Result to make failure modes explicit, and batch"
+        "operations commit atomically — all steps succeed, or none are applied."
+
+decision SeparateAvailableAndReserved
+    date = "2026-04-16"
+    reason =
+        "Reserved stock represents orders that have been accepted but not yet shipped."
+        "Collapsing reserved into available would allow a second reservation to over-commit"
+        "the same physical units. Tracking them separately makes the invariant reserved <= onHand"
+        "checkable at any point."
+    chosen = "SplitAvailableReserved"
+    rejected = ["SingleAvailableCounter", "NegativeAvailableAsReserved"]
+    impacts = [reserveStock, fulfillReservation, releaseReservation, availableStock]
+
+decision ResultOverException
+    date = "2026-04-16"
+    reason =
+        "Invalid operations (unknown warehouse, negative qty, over-reserve) are expected"
+        "at runtime — clients need to branch on them. Errors-as-values keep every call site"
+        "obvious about what can fail."
+    chosen = "ResultReturns"
+    rejected = ["ExceptionsOrPanics", "SilentNoop"]
+    impacts = [receiveShipment, reserveStock, releaseReservation, fulfillReservation, rebalance]
+
+decision AtomicBatchesAsResultChain
+    date = "2026-04-16"
+    reason =
+        "A multi-line order, a truck delivery for many SKUs, or a fleet-wide rebalance must"
+        "either apply every operation or leave the inventory untouched. Because Inventory is"
+        "immutable, folding a list of operations through the existing checked single-step"
+        "functions already has that property: each step returns Result<Inventory, String>, and"
+        "a failure simply short-circuits the fold so the intermediate inventory is discarded"
+        "before any caller observes it. There is no separate transaction log, rollback step, or"
+        "two-phase commit — the Result chain is the atomicity mechanism. The batch error embeds"
+        "the zero-based index of the first failing operation so callers can pinpoint the cause."
+    chosen = "FoldOverCheckedSteps"
+    rejected = ["TransactionLogWithRollback", "BestEffortSkipFailures", "MutableStagingBuffer"]
+    impacts = [reserveBatch, receiveShipmentBatch, rebalanceBatch]
+
+record Sku
+    id: String
+    name: String
+    reorderPoint: Int
+
+record Warehouse
+    id: String
+    location: String
+
+record StockLevel
+    onHand: Int
+    reserved: Int
+
+record Inventory
+    skus: Map<String, Sku>
+    warehouses: Map<String, Warehouse>
+    levels: Map<String, Map<String, StockLevel>>
+
+record ReserveOp
+    warehouseId: String
+    skuId: String
+    qty: Int
+
+record ReceiveOp
+    warehouseId: String
+    skuId: String
+    qty: Int
+
+record RebalanceOp
+    fromId: String
+    toId: String
+    skuId: String
+    qty: Int
+
+fn emptyInventory() -> Inventory
+    ? "Builds an empty inventory with no warehouses, skus, or stock."
+    empty = Map.fromList([])
+    Inventory(skus = empty, warehouses = empty, levels = empty)
+
+verify emptyInventory
+    Map.len(emptyInventory().skus) => 0
+    Map.len(emptyInventory().warehouses) => 0
+    Map.len(emptyInventory().levels) => 0
+
+fn registerSku(inv: Inventory, s: Sku) -> Inventory
+    ? "Adds or replaces an SKU definition."
+    Inventory.update(inv, skus = Map.set(inv.skus, s.id, s))
+
+verify registerSku
+    Map.len(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)).skus) => 1
+
+fn registerWarehouse(inv: Inventory, w: Warehouse) -> Inventory
+    ? "Adds or replaces a warehouse definition."
+    Inventory.update(inv, warehouses = Map.set(inv.warehouses, w.id, w))
+
+verify registerWarehouse
+    Map.len(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")).warehouses) => 1
+
+fn zeroLevel() -> StockLevel
+    ? "The stock level used for warehouse/sku pairs with no recorded stock yet."
+    StockLevel(onHand = 0, reserved = 0)
+
+verify zeroLevel
+    zeroLevel().onHand => 0
+    zeroLevel().reserved => 0
+
+fn getLevelFromMap(perSku: Map<String, StockLevel>, skuId: String) -> StockLevel
+    ? "Looks up a stock level in the per-sku submap, defaulting to zero."
+    match Map.get(perSku, skuId)
+        Option.None -> zeroLevel()
+        Option.Some(lvl) -> lvl
+
+verify getLevelFromMap
+    getLevelFromMap(Map.fromList([]), "S1") => zeroLevel()
+    getLevelFromMap(Map.fromList([("S1", StockLevel(onHand = 3, reserved = 1))]), "S1") => StockLevel(onHand = 3, reserved = 1)
+
+fn getLevel(inv: Inventory, warehouseId: String, skuId: String) -> StockLevel
+    ? "Returns the stock level for (warehouse, sku), or zero if none recorded yet."
+    match Map.get(inv.levels, warehouseId)
+        Option.None -> zeroLevel()
+        Option.Some(perSku) -> getLevelFromMap(perSku, skuId)
+
+verify getLevel
+    getLevel(emptyInventory(), "W1", "S1") => zeroLevel()
+
+fn perSkuMap(inv: Inventory, warehouseId: String) -> Map<String, StockLevel>
+    ? "Returns the existing per-sku submap for a warehouse, or a new empty map."
+    match Map.get(inv.levels, warehouseId)
+        Option.None -> Map.fromList([])
+        Option.Some(m) -> m
+
+verify perSkuMap
+    Map.len(perSkuMap(emptyInventory(), "W1")) => 0
+
+fn setLevel(inv: Inventory, warehouseId: String, skuId: String, lvl: StockLevel) -> Inventory
+    ? "Stores a stock level for (warehouse, sku). Overwrites any previous value."
+    updated = Map.set(perSkuMap(inv, warehouseId), skuId, lvl)
+    Inventory.update(inv, levels = Map.set(inv.levels, warehouseId, updated))
+
+verify setLevel
+    getLevel(setLevel(emptyInventory(), "W1", "S1", StockLevel(onHand = 4, reserved = 1)), "W1", "S1") => StockLevel(onHand = 4, reserved = 1)
+
+fn availableStock(inv: Inventory, warehouseId: String, skuId: String) -> Int
+    ? "Returns units currently available for new reservations: onHand minus reserved."
+    lvl = getLevel(inv, warehouseId, skuId)
+    lvl.onHand - lvl.reserved
+
+verify availableStock
+    availableStock(emptyInventory(), "W1", "S1") => 0
+
+fn knownWarehouse(inv: Inventory, warehouseId: String) -> Bool
+    ? "Returns true if the warehouse has been registered."
+    match Map.get(inv.warehouses, warehouseId)
+        Option.None -> false
+        Option.Some(_) -> true
+
+verify knownWarehouse
+    knownWarehouse(emptyInventory(), "W1") => false
+    knownWarehouse(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")), "W1") => true
+
+fn knownSku(inv: Inventory, skuId: String) -> Bool
+    ? "Returns true if the sku has been registered."
+    match Map.get(inv.skus, skuId)
+        Option.None -> false
+        Option.Some(_) -> true
+
+verify knownSku
+    knownSku(emptyInventory(), "S1") => false
+    knownSku(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)), "S1") => true
+
+fn applyReceive(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: adds qty to onHand at (warehouse, sku). Assumes inputs are valid."
+    lvl = getLevel(inv, warehouseId, skuId)
+    setLevel(inv, warehouseId, skuId, StockLevel(onHand = lvl.onHand + qty, reserved = lvl.reserved))
+
+verify applyReceive
+    getLevel(applyReceive(emptyInventory(), "W1", "S1", 7), "W1", "S1") => StockLevel(onHand = 7, reserved = 0)
+
+fn receiveShipmentChecked(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Receives a shipment assuming qty is positive. Checks warehouse and sku are known."
+    match knownWarehouse(inv, warehouseId)
+        false -> Result.Err("Unknown warehouse: {warehouseId}")
+        true -> match knownSku(inv, skuId)
+            false -> Result.Err("Unknown sku: {skuId}")
+            true -> Result.Ok(applyReceive(inv, warehouseId, skuId, qty))
+
+verify receiveShipmentChecked
+    receiveShipmentChecked(emptyInventory(), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
+
+fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Adds qty to onHand. Fails on unknown warehouse/sku or non-positive qty."
+    match qty <= 0
+        true -> Result.Err("Shipment qty must be positive")
+        false -> receiveShipmentChecked(inv, warehouseId, skuId, qty)
+
+verify receiveShipment
+    receiveShipment(emptyInventory(), "W1", "S1", 5) => Result.Err("Unknown warehouse: W1")
+    receiveShipment(emptyInventory(), "W1", "S1", 0) => Result.Err("Shipment qty must be positive")
+
+fn applyReserve(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: adds qty to reserved at (warehouse, sku). Assumes inputs are valid and sufficient."
+    lvl = getLevel(inv, warehouseId, skuId)
+    setLevel(inv, warehouseId, skuId, StockLevel(onHand = lvl.onHand, reserved = lvl.reserved + qty))
+
+verify applyReserve
+    getLevel(applyReserve(applyReceive(emptyInventory(), "W1", "S1", 10), "W1", "S1", 3), "W1", "S1") => StockLevel(onHand = 10, reserved = 3)
+
+fn reserveIfAvailable(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Checks that qty is available before reserving."
+    lvl = getLevel(inv, warehouseId, skuId)
+    avail = lvl.onHand - lvl.reserved
+    match qty > avail
+        true -> Result.Err("Insufficient available stock: need {qty}, have {avail}")
+        false -> Result.Ok(applyReserve(inv, warehouseId, skuId, qty))
+
+verify reserveIfAvailable
+    reserveIfAvailable(emptyInventory(), "W1", "S1", 1) => Result.Err("Insufficient available stock: need 1, have 0")
+
+fn reserveStockChecked(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Reserves after warehouse+sku validation. Delegates to reserveIfAvailable."
+    match knownWarehouse(inv, warehouseId)
+        false -> Result.Err("Unknown warehouse: {warehouseId}")
+        true -> match knownSku(inv, skuId)
+            false -> Result.Err("Unknown sku: {skuId}")
+            true -> reserveIfAvailable(inv, warehouseId, skuId, qty)
+
+verify reserveStockChecked
+    reserveStockChecked(emptyInventory(), "W1", "S1", 1) => Result.Err("Unknown warehouse: W1")
+
+fn reserveStock(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Reserves qty for an order. Fails if qty would exceed available (onHand - reserved)."
+    match qty <= 0
+        true -> Result.Err("Reserve qty must be positive")
+        false -> reserveStockChecked(inv, warehouseId, skuId, qty)
+
+verify reserveStock
+    reserveStock(emptyInventory(), "W1", "S1", 0) => Result.Err("Reserve qty must be positive")
+    reserveStock(emptyInventory(), "W1", "S1", 1) => Result.Err("Unknown warehouse: W1")
+
+fn applyRelease(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: subtracts qty from reserved. Assumes qty <= current reserved."
+    lvl = getLevel(inv, warehouseId, skuId)
+    setLevel(inv, warehouseId, skuId, StockLevel(onHand = lvl.onHand, reserved = lvl.reserved - qty))
+
+verify applyRelease
+    getLevel(applyRelease(applyReserve(applyReceive(emptyInventory(), "W1", "S1", 5), "W1", "S1", 3), "W1", "S1", 2), "W1", "S1") => StockLevel(onHand = 5, reserved = 1)
+
+fn releaseIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Releases qty from reserved, failing if qty exceeds what is currently reserved."
+    lvl = getLevel(inv, warehouseId, skuId)
+    match qty > lvl.reserved
+        true -> Result.Err("Cannot release more than reserved: requested {qty}, reserved {lvl.reserved}")
+        false -> Result.Ok(applyRelease(inv, warehouseId, skuId, qty))
+
+verify releaseIfReserved
+    releaseIfReserved(emptyInventory(), "W1", "S1", 1) => Result.Err("Cannot release more than reserved: requested 1, reserved 0")
+
+fn releaseReservation(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Cancels a previously made reservation. Fails if qty exceeds current reserved."
+    match qty <= 0
+        true -> Result.Err("Release qty must be positive")
+        false -> releaseIfReserved(inv, warehouseId, skuId, qty)
+
+verify releaseReservation
+    releaseReservation(emptyInventory(), "W1", "S1", 0) => Result.Err("Release qty must be positive")
+
+fn applyFulfill(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: removes qty from both onHand and reserved. Assumes qty <= current reserved."
+    lvl = getLevel(inv, warehouseId, skuId)
+    setLevel(inv, warehouseId, skuId, StockLevel(onHand = lvl.onHand - qty, reserved = lvl.reserved - qty))
+
+verify applyFulfill
+    getLevel(applyFulfill(applyReserve(applyReceive(emptyInventory(), "W1", "S1", 5), "W1", "S1", 3), "W1", "S1", 2), "W1", "S1") => StockLevel(onHand = 3, reserved = 1)
+
+fn fulfillIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Ships qty, failing if qty exceeds what is currently reserved at this (warehouse, sku)."
+    lvl = getLevel(inv, warehouseId, skuId)
+    match qty > lvl.reserved
+        true -> Result.Err("Cannot fulfill more than reserved: requested {qty}, reserved {lvl.reserved}")
+        false -> Result.Ok(applyFulfill(inv, warehouseId, skuId, qty))
+
+verify fulfillIfReserved
+    fulfillIfReserved(emptyInventory(), "W1", "S1", 1) => Result.Err("Cannot fulfill more than reserved: requested 1, reserved 0")
+
+fn fulfillReservation(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Ships qty out: removes it from both reserved and onHand. Fails if qty exceeds reserved."
+    match qty <= 0
+        true -> Result.Err("Fulfill qty must be positive")
+        false -> fulfillIfReserved(inv, warehouseId, skuId, qty)
+
+verify fulfillReservation
+    fulfillReservation(emptyInventory(), "W1", "S1", 0) => Result.Err("Fulfill qty must be positive")
+
+fn applyRebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: moves qty of unreserved stock from 'fromId' to 'toId'. Assumes source has qty available."
+    fromLvl = getLevel(inv, fromId, skuId)
+    toLvl = getLevel(inv, toId, skuId)
+    withFrom = setLevel(inv, fromId, skuId, StockLevel(onHand = fromLvl.onHand - qty, reserved = fromLvl.reserved))
+    setLevel(withFrom, toId, skuId, StockLevel(onHand = toLvl.onHand + qty, reserved = toLvl.reserved))
+
+verify applyRebalance
+    getLevel(applyRebalance(applyReceive(emptyInventory(), "W1", "S1", 10), "W1", "W2", "S1", 4), "W2", "S1") => StockLevel(onHand = 4, reserved = 0)
+
+fn rebalanceIfAvailable(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Rebalances after checking source has enough available stock."
+    fromLvl = getLevel(inv, fromId, skuId)
+    avail = fromLvl.onHand - fromLvl.reserved
+    match qty > avail
+        true -> Result.Err("Insufficient stock at {fromId}: need {qty}, have {avail}")
+        false -> Result.Ok(applyRebalance(inv, fromId, toId, skuId, qty))
+
+verify rebalanceIfAvailable
+    rebalanceIfAvailable(emptyInventory(), "W1", "W2", "S1", 1) => Result.Err("Insufficient stock at W1: need 1, have 0")
+
+fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Rebalances after warehouse and sku validation."
+    match knownWarehouse(inv, fromId)
+        false -> Result.Err("Unknown warehouse: {fromId}")
+        true -> match knownWarehouse(inv, toId)
+            false -> Result.Err("Unknown warehouse: {toId}")
+            true -> match knownSku(inv, skuId)
+                false -> Result.Err("Unknown sku: {skuId}")
+                true -> rebalanceIfAvailable(inv, fromId, toId, skuId, qty)
+
+verify rebalanceChecked
+    rebalanceChecked(emptyInventory(), "W1", "W2", "S1", 1) => Result.Err("Unknown warehouse: W1")
+
+fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Transfers qty of unreserved stock from 'fromId' warehouse to 'toId' warehouse."
+    match qty <= 0
+        true -> Result.Err("Rebalance qty must be positive")
+        false -> rebalanceChecked(inv, fromId, toId, skuId, qty)
+
+verify rebalance
+    rebalance(emptyInventory(), "W1", "W2", "S1", 0) => Result.Err("Rebalance qty must be positive")
+
+fn annotateBatchError(opKind: String, index: Int, err: String) -> String
+    ? "Prefixes a batch step error with the operation kind and zero-based index."
+    "{opKind}[{index}]: {err}"
+
+verify annotateBatchError
+    annotateBatchError("reserve", 2, "boom") => "reserve[2]: boom"
+
+fn seededInventory() -> Inventory
+    ? "Fixture used by batch verify blocks: W1 and W2 registered, S1 and S2 registered,"
+      "W1 holds 10 of S1 and 5 of S2, W2 holds 2 of S1 on hand."
+    inv0 = emptyInventory()
+    inv1 = registerWarehouse(inv0, Warehouse(id = "W1", location = "NYC"))
+    inv2 = registerWarehouse(inv1, Warehouse(id = "W2", location = "LA"))
+    inv3 = registerSku(inv2, Sku(id = "S1", name = "Widget", reorderPoint = 3))
+    inv4 = registerSku(inv3, Sku(id = "S2", name = "Gadget", reorderPoint = 1))
+    inv5 = applyReceive(inv4, "W1", "S1", 10)
+    inv6 = applyReceive(inv5, "W1", "S2", 5)
+    applyReceive(inv6, "W2", "S1", 2)
+
+verify seededInventory
+    availableStock(seededInventory(), "W1", "S1") => 10
+    availableStock(seededInventory(), "W1", "S2") => 5
+    availableStock(seededInventory(), "W2", "S1") => 2
+
+fn reserveBatchFrom(inv: Inventory, ops: List<ReserveOp>, index: Int) -> Result<Inventory, String>
+    ? "Folds reservations starting at 'index'. Returns the updated inventory on full success,"
+      "or the first failure annotated with the offending index."
+    match ops
+        [] -> Result.Ok(inv)
+        [op, ..rest] -> reserveBatchStep(inv, op, rest, index)
+
+fn reserveBatchStep(inv: Inventory, op: ReserveOp, rest: List<ReserveOp>, index: Int) -> Result<Inventory, String>
+    ? "Applies one reservation and recurses. Short-circuits on first error."
+    match reserveStock(inv, op.warehouseId, op.skuId, op.qty)
+        Result.Err(e) -> Result.Err(annotateBatchError("reserve", index, e))
+        Result.Ok(inv2) -> reserveBatchFrom(inv2, rest, index + 1)
+
+verify reserveBatchFrom
+    reserveBatchFrom(emptyInventory(), [], 0) => Result.Ok(emptyInventory())
+    reserveBatchFrom(emptyInventory(), [ReserveOp(warehouseId = "W1", skuId = "S1", qty = 1)], 3) => Result.Err("reserve[3]: Unknown warehouse: W1")
+
+verify reserveBatchStep
+    reserveBatchStep(emptyInventory(), ReserveOp(warehouseId = "W1", skuId = "S1", qty = 1), [], 0) => Result.Err("reserve[0]: Unknown warehouse: W1")
+
+fn reserveBatch(inv: Inventory, ops: List<ReserveOp>) -> Result<Inventory, String>
+    ? "Reserves stock for a list of operations atomically. Either every reservation is applied"
+      "or the returned Err names the first failing step and the original inventory is unchanged."
+    reserveBatchFrom(inv, ops, 0)
+
+fn availableAfterReserveBatch(inv: Inventory, ops: List<ReserveOp>, wh: String, sku: String) -> Int
+    ? "Runs a reserve batch and returns the queried availableStock on success, or a sentinel"
+      "-1 on failure so that verify cases can distinguish commit from rollback outcomes."
+    match reserveBatch(inv, ops)
+        Result.Err(_) -> -1
+        Result.Ok(inv2) -> availableStock(inv2, wh, sku)
+
+verify availableAfterReserveBatch
+    availableAfterReserveBatch(seededInventory(), [], "W1", "S1") => 10
+    availableAfterReserveBatch(seededInventory(), [ReserveOp(warehouseId = "W1", skuId = "S1", qty = 3), ReserveOp(warehouseId = "W1", skuId = "S2", qty = 2), ReserveOp(warehouseId = "W2", skuId = "S1", qty = 1)], "W1", "S1") => 7
+    availableAfterReserveBatch(seededInventory(), [ReserveOp(warehouseId = "W1", skuId = "S1", qty = 3), ReserveOp(warehouseId = "W1", skuId = "S2", qty = 2), ReserveOp(warehouseId = "W2", skuId = "S1", qty = 999)], "W1", "S1") => -1
+
+verify reserveBatch
+    reserveBatch(emptyInventory(), []) => Result.Ok(emptyInventory())
+    reserveBatch(emptyInventory(), [ReserveOp(warehouseId = "W1", skuId = "S1", qty = 1)]) => Result.Err("reserve[0]: Unknown warehouse: W1")
+    reserveBatch(seededInventory(), [ReserveOp(warehouseId = "W1", skuId = "S1", qty = 3), ReserveOp(warehouseId = "W1", skuId = "S2", qty = 2), ReserveOp(warehouseId = "W2", skuId = "S1", qty = 999)]) => Result.Err("reserve[2]: Insufficient available stock: need 999, have 2")
+
+fn receiveShipmentBatchFrom(inv: Inventory, ops: List<ReceiveOp>, index: Int) -> Result<Inventory, String>
+    ? "Folds shipment receipts starting at 'index'. Short-circuits on first failure."
+    match ops
+        [] -> Result.Ok(inv)
+        [op, ..rest] -> receiveShipmentBatchStep(inv, op, rest, index)
+
+fn receiveShipmentBatchStep(inv: Inventory, op: ReceiveOp, rest: List<ReceiveOp>, index: Int) -> Result<Inventory, String>
+    ? "Applies one shipment receipt and recurses. Short-circuits on first error."
+    match receiveShipment(inv, op.warehouseId, op.skuId, op.qty)
+        Result.Err(e) -> Result.Err(annotateBatchError("receive", index, e))
+        Result.Ok(inv2) -> receiveShipmentBatchFrom(inv2, rest, index + 1)
+
+verify receiveShipmentBatchFrom
+    receiveShipmentBatchFrom(emptyInventory(), [], 0) => Result.Ok(emptyInventory())
+    receiveShipmentBatchFrom(emptyInventory(), [ReceiveOp(warehouseId = "W1", skuId = "S1", qty = 5)], 2) => Result.Err("receive[2]: Unknown warehouse: W1")
+
+verify receiveShipmentBatchStep
+    receiveShipmentBatchStep(emptyInventory(), ReceiveOp(warehouseId = "W1", skuId = "S1", qty = 5), [], 0) => Result.Err("receive[0]: Unknown warehouse: W1")
+
+fn receiveShipmentBatch(inv: Inventory, ops: List<ReceiveOp>) -> Result<Inventory, String>
+    ? "Receives a truckload of shipments atomically. Either every line is applied or the"
+      "returned Err names the first failing step and inventory is unchanged."
+    receiveShipmentBatchFrom(inv, ops, 0)
+
+fn onHandAfterReceiveBatch(inv: Inventory, ops: List<ReceiveOp>, wh: String, sku: String) -> Int
+    ? "Runs a receive batch and returns onHand on success, -1 on failure."
+    match receiveShipmentBatch(inv, ops)
+        Result.Err(_) -> -1
+        Result.Ok(inv2) -> getLevel(inv2, wh, sku).onHand
+
+verify onHandAfterReceiveBatch
+    onHandAfterReceiveBatch(seededInventory(), [], "W1", "S1") => 10
+    onHandAfterReceiveBatch(seededInventory(), [ReceiveOp(warehouseId = "W1", skuId = "S1", qty = 4), ReceiveOp(warehouseId = "W2", skuId = "S1", qty = 6)], "W1", "S1") => 14
+    onHandAfterReceiveBatch(seededInventory(), [ReceiveOp(warehouseId = "W1", skuId = "S1", qty = 4), ReceiveOp(warehouseId = "W2", skuId = "UNKNOWN", qty = 6)], "W1", "S1") => -1
+
+verify receiveShipmentBatch
+    receiveShipmentBatch(emptyInventory(), []) => Result.Ok(emptyInventory())
+    receiveShipmentBatch(emptyInventory(), [ReceiveOp(warehouseId = "W1", skuId = "S1", qty = 5)]) => Result.Err("receive[0]: Unknown warehouse: W1")
+    receiveShipmentBatch(seededInventory(), [ReceiveOp(warehouseId = "W1", skuId = "S1", qty = 4), ReceiveOp(warehouseId = "W2", skuId = "UNKNOWN", qty = 6)]) => Result.Err("receive[1]: Unknown sku: UNKNOWN")
+
+fn rebalanceBatchFrom(inv: Inventory, ops: List<RebalanceOp>, index: Int) -> Result<Inventory, String>
+    ? "Folds rebalance moves starting at 'index'. Short-circuits on first failure."
+    match ops
+        [] -> Result.Ok(inv)
+        [op, ..rest] -> rebalanceBatchStep(inv, op, rest, index)
+
+fn rebalanceBatchStep(inv: Inventory, op: RebalanceOp, rest: List<RebalanceOp>, index: Int) -> Result<Inventory, String>
+    ? "Applies one rebalance move and recurses. Short-circuits on first error."
+    match rebalance(inv, op.fromId, op.toId, op.skuId, op.qty)
+        Result.Err(e) -> Result.Err(annotateBatchError("rebalance", index, e))
+        Result.Ok(inv2) -> rebalanceBatchFrom(inv2, rest, index + 1)
+
+verify rebalanceBatchFrom
+    rebalanceBatchFrom(emptyInventory(), [], 0) => Result.Ok(emptyInventory())
+    rebalanceBatchFrom(emptyInventory(), [RebalanceOp(fromId = "W1", toId = "W2", skuId = "S1", qty = 1)], 5) => Result.Err("rebalance[5]: Unknown warehouse: W1")
+
+verify rebalanceBatchStep
+    rebalanceBatchStep(emptyInventory(), RebalanceOp(fromId = "W1", toId = "W2", skuId = "S1", qty = 1), [], 0) => Result.Err("rebalance[0]: Unknown warehouse: W1")
+
+fn rebalanceBatch(inv: Inventory, ops: List<RebalanceOp>) -> Result<Inventory, String>
+    ? "Applies a list of rebalance moves atomically. Either every move is applied or the"
+      "returned Err names the first failing step and inventory is unchanged."
+    rebalanceBatchFrom(inv, ops, 0)
+
+fn onHandAfterRebalanceBatch(inv: Inventory, ops: List<RebalanceOp>, wh: String, sku: String) -> Int
+    ? "Runs a rebalance batch and returns onHand on success, -1 on failure."
+    match rebalanceBatch(inv, ops)
+        Result.Err(_) -> -1
+        Result.Ok(inv2) -> getLevel(inv2, wh, sku).onHand
+
+verify onHandAfterRebalanceBatch
+    onHandAfterRebalanceBatch(seededInventory(), [], "W2", "S1") => 2
+    onHandAfterRebalanceBatch(seededInventory(), [RebalanceOp(fromId = "W1", toId = "W2", skuId = "S1", qty = 3), RebalanceOp(fromId = "W1", toId = "W2", skuId = "S2", qty = 1)], "W2", "S1") => 5
+    onHandAfterRebalanceBatch(seededInventory(), [RebalanceOp(fromId = "W1", toId = "W2", skuId = "S1", qty = 3), RebalanceOp(fromId = "W1", toId = "W2", skuId = "S2", qty = 999)], "W2", "S1") => -1
+
+verify rebalanceBatch
+    rebalanceBatch(emptyInventory(), []) => Result.Ok(emptyInventory())
+    rebalanceBatch(emptyInventory(), [RebalanceOp(fromId = "W1", toId = "W2", skuId = "S1", qty = 1)]) => Result.Err("rebalance[0]: Unknown warehouse: W1")
+    rebalanceBatch(seededInventory(), [RebalanceOp(fromId = "W1", toId = "W2", skuId = "S1", qty = 3), RebalanceOp(fromId = "W1", toId = "W2", skuId = "S2", qty = 999)]) => Result.Err("rebalance[1]: Insufficient stock at W1: need 999, have 5")
+
+fn reorderPointForSku(inv: Inventory, skuId: String) -> Option<Int>
+    ? "Looks up the reorder point of a registered sku."
+    match Map.get(inv.skus, skuId)
+        Option.None -> Option.None
+        Option.Some(sku) -> Option.Some(sku.reorderPoint)
+
+verify reorderPointForSku
+    reorderPointForSku(emptyInventory(), "S1") => Option.None
+
+fn needsReorder(inv: Inventory, warehouseId: String, skuId: String) -> Bool
+    ? "True when available stock at this warehouse falls at or below the sku's reorder point."
+    match reorderPointForSku(inv, skuId)
+        Option.None -> false
+        Option.Some(rp) -> availableStock(inv, warehouseId, skuId) <= rp
+
+verify needsReorder
+    needsReorder(emptyInventory(), "W1", "S1") => false
+
+fn sumOnHand(inv: Inventory, skuId: String, warehouseIds: List<String>) -> Int
+    ? "Folds onHand across warehouse ids. Helper for totalOnHand."
+    match warehouseIds
+        [] -> 0
+        [wid, ..rest] -> getLevel(inv, wid, skuId).onHand + sumOnHand(inv, skuId, rest)
+
+verify sumOnHand
+    sumOnHand(emptyInventory(), "S1", []) => 0
+    sumOnHand(emptyInventory(), "S1", ["W1", "W2"]) => 0
+
+fn totalOnHand(inv: Inventory, skuId: String) -> Int
+    ? "Sums onHand across all warehouses for this sku."
+    sumOnHand(inv, skuId, Map.keys(inv.warehouses))
+
+verify totalOnHand
+    totalOnHand(emptyInventory(), "S1") => 0
+
+fn main() -> Unit
+    ! [Console.print]
+    inv = emptyInventory()
+    inv1 = registerWarehouse(inv, Warehouse(id = "W1", location = "NYC"))
+    inv2 = registerSku(inv1, Sku(id = "S1", name = "Widget", reorderPoint = 10))
+    Console.print("Initial available:")
+    Console.print(availableStock(inv2, "W1", "S1"))
+    Console.print("Shipment of 20:")
+    Console.print(receiveShipment(inv2, "W1", "S1", 20))

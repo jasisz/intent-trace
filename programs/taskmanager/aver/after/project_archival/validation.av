@@ -1,0 +1,130 @@
+module Validation
+    intent =
+        "Pure permission predicates for the task-manager. Every cross-cutting check"
+        "that operations consult lives here, so that business rules are kept out of the"
+        "operation bodies and can be reviewed on their own. Archival composes with"
+        "write access: mutating predicates also require the project to be active."
+    depends [Models]
+    exposes [isAdmin, isMember, isOwnerOrAdmin, isArchived, canArchive, canAssign, canModifyProject, canWriteToProject, canTransitionTo]
+
+decision RulesPureAndColocated
+    date = "2026-04-17"
+    reason =
+        "Keeping permission checks as named pure functions makes each rule reviewable"
+        "in one place. Inlining them into the operation would spread the same policy"
+        "across several files and make it easy for drift to sneak in."
+    chosen = "PurePredicateModule"
+    rejected = ["InlineChecks", "ClassMethodsOnRecords"]
+    impacts = [canAssign, canModifyProject, canTransitionTo]
+
+decision ArchivalComposesViaCanWriteToProject
+    date = "2026-04-16"
+    reason =
+        "Archival adds one universal requirement to every mutation: the project must"
+        "be active. Rather than repeating that check in each operation, we introduce a"
+        "single canWriteToProject that combines owner/admin authority with the active"
+        "flag, and keep canModifyProject as the archive-insensitive check that"
+        "archive/unarchive themselves consult."
+    chosen = "ComposedPredicate"
+    rejected = ["PerOperationDuplication", "ArchivedBranchPerOperation"]
+    impacts = [canWriteToProject, canAssign, canArchive]
+
+fn isAdmin(u: User) -> Bool
+    ? "True if the user has Admin role."
+    match u.role
+        Role.Admin -> true
+        Role.Member -> false
+        Role.Viewer -> false
+
+verify isAdmin
+    isAdmin(User(id = "u1", name = "A", role = Role.Admin)) => true
+    isAdmin(User(id = "u2", name = "M", role = Role.Member)) => false
+    isAdmin(User(id = "u3", name = "V", role = Role.Viewer)) => false
+
+fn isMember(p: Project, userId: String) -> Bool
+    ? "True if userId is listed in the project's memberIds."
+    List.contains(p.memberIds, userId)
+
+fn isOwnerOrAdmin(u: User, p: Project) -> Bool
+    ? "True if the user owns the project or has Admin role on the system."
+    match u.id == p.ownerId
+        true -> true
+        false -> isAdmin(u)
+
+fn isArchived(p: Project) -> Bool
+    ? "True if the project is archived and therefore read-only."
+    p.isArchived
+
+verify isArchived
+    isArchived(Project(id = "p", name = "N", ownerId = "u", memberIds = ["u"], isArchived = true)) => true
+    isArchived(Project(id = "p", name = "N", ownerId = "u", memberIds = ["u"], isArchived = false)) => false
+
+fn canArchive(actor: User, project: Project) -> Bool
+    ? "Archiving or un-archiving: only the owner or an Admin may flip the flag."
+      "This check is archive-insensitive because it gates the operation that changes"
+      "the flag itself."
+    isOwnerOrAdmin(actor, project)
+
+fn canModifyProject(actor: User, project: Project) -> Bool
+    ? "Authority check for changing project membership or metadata: only owner or"
+      "Admin. Does NOT consider archival; use canWriteToProject for regular"
+      "mutations so that archived projects are rejected."
+    isOwnerOrAdmin(actor, project)
+
+fn canWriteToProject(actor: User, project: Project) -> Bool
+    ? "Composed rule for any mutation that must be blocked on archived projects:"
+      "the actor must be owner/Admin AND the project must not be archived."
+    match isArchived(project)
+        true -> false
+        false -> isOwnerOrAdmin(actor, project)
+
+verify canWriteToProject
+    canWriteToProject(User(id = "u1", name = "A", role = Role.Admin), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = false)) => true
+    canWriteToProject(User(id = "u1", name = "A", role = Role.Admin), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = true)) => false
+    canWriteToProject(User(id = "u9", name = "V", role = Role.Viewer), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = false)) => false
+
+fn canAssign(actor: User, project: Project, assignee: User) -> Bool
+    ? "Assigning a task: actor must have write access to the project (which already"
+      "rejects archived projects) AND the target assignee must be a member."
+    match canWriteToProject(actor, project)
+        false -> false
+        true -> isMember(project, assignee.id)
+
+fn canTransitionTo(current: Status, next: Status) -> Bool
+    ? "Allowed Task status transitions."
+    match current
+        Status.Todo -> canFromTodo(next)
+        Status.InProgress -> canFromInProgress(next)
+        Status.Blocked -> canFromBlocked(next)
+        Status.Done -> false
+
+fn canFromTodo(next: Status) -> Bool
+    ? "Allowed next states from Todo."
+    match next
+        Status.InProgress -> true
+        Status.Blocked -> true
+        Status.Todo -> false
+        Status.Done -> false
+
+fn canFromInProgress(next: Status) -> Bool
+    ? "Allowed next states from InProgress."
+    match next
+        Status.Done -> true
+        Status.Blocked -> true
+        Status.Todo -> true
+        Status.InProgress -> false
+
+fn canFromBlocked(next: Status) -> Bool
+    ? "Allowed next states from Blocked."
+    match next
+        Status.InProgress -> true
+        Status.Todo -> true
+        Status.Blocked -> false
+        Status.Done -> false
+
+verify canTransitionTo
+    canTransitionTo(Status.Todo, Status.InProgress) => true
+    canTransitionTo(Status.Todo, Status.Done) => false
+    canTransitionTo(Status.Done, Status.InProgress) => false
+    canTransitionTo(Status.InProgress, Status.Done) => true
+    canTransitionTo(Status.Blocked, Status.InProgress) => true

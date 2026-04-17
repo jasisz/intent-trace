@@ -1,0 +1,120 @@
+module Tasks
+    intent =
+        "Task lifecycle: creation, assignment, status transitions. Every mutation"
+        "consults Validation for permission and transition rules; Tasks contains no"
+        "policy of its own — only the orchestration of checks and updates. Tasks carry"
+        "a Priority; priority-sensitive rules (e.g. Critical-only-Admin assignment)"
+        "live behind Validation.canAssignAtPriority."
+    depends [Models, Validation]
+    exposes [createTask, createTaskWithPriority, assignTask, unassignTask, setStatus, setPriority, describeTask]
+
+decision DefaultPriorityIsMedium
+    date = "2026-04-16"
+    reason =
+        "Existing callers invoke createTask with no priority argument. Defaulting to"
+        "Medium preserves behaviour for non-critical work and makes the baseline"
+        "assignment rule (owner-or-Admin + assignee-is-member) unchanged for callers"
+        "that never set priority explicitly. An explicit createTaskWithPriority lets"
+        "callers opt in to a different level without a breaking signature change."
+    chosen = "MediumDefault"
+    rejected = ["LowDefault", "RequirePriorityArgument"]
+    impacts = [createTask, createTaskWithPriority]
+
+fn createTask(id: String, projectId: String, title: String, creator: User) -> Task
+    ? "Creates a Todo task in the given project, authored by creator, at the default"
+      "Medium priority. The task starts unassigned — a subsequent assignTask places"
+      "it with a member. Use createTaskWithPriority to pick a different level."
+    createTaskWithPriority(id, projectId, title, creator, Priority.Medium)
+
+fn createTaskWithPriority(id: String, projectId: String, title: String, creator: User, priority: Priority) -> Task
+    ? "Creates a Todo task at an explicit priority. See createTask for the default."
+    Task(
+        id = id,
+        projectId = projectId,
+        title = title,
+        status = Status.Todo,
+        priority = priority,
+        assigneeId = Option.None,
+        createdByUserId = creator.id
+    )
+
+verify createTask
+    createTask("t1", "p1", "Write docs", User(id = "u1", name = "A", role = Role.Member)) => Task(id = "t1", projectId = "p1", title = "Write docs", status = Status.Todo, priority = Priority.Medium, assigneeId = Option.None, createdByUserId = "u1")
+
+verify createTaskWithPriority
+    createTaskWithPriority("t2", "p1", "Ship", User(id = "u1", name = "A", role = Role.Admin), Priority.Critical) => Task(id = "t2", projectId = "p1", title = "Ship", status = Status.Todo, priority = Priority.Critical, assigneeId = Option.None, createdByUserId = "u1")
+
+fn applyAssign(t: Task, assigneeId: String) -> Task
+    ? "Unchecked: sets assigneeId."
+    Task.update(t, assigneeId = Option.Some(assigneeId))
+
+fn assignTask(actor: User, project: Project, task: Task, assignee: User) -> Result<Task, String>
+    ? "Assigns a task to assignee. Uses the priority-aware rule: Critical tasks"
+      "require Admin, lower priorities keep the owner-or-Admin + assignee-is-member"
+      "rule. All policy lives in Validation.canAssignAtPriority."
+    match Validation.canAssignAtPriority(actor, project, assignee, task.priority)
+        false -> Result.Err("Actor {actor.id} cannot assign tasks in project {project.id} to {assignee.id}")
+        true -> Result.Ok(applyAssign(task, assignee.id))
+
+fn applyUnassign(t: Task) -> Task
+    ? "Unchecked: clears assigneeId."
+    Task.update(t, assigneeId = Option.None)
+
+fn unassignTask(actor: User, project: Project, task: Task) -> Result<Task, String>
+    ? "Removes the current assignee. Actor must have project write access."
+    match Validation.canModifyProject(actor, project)
+        false -> Result.Err("Actor {actor.id} cannot modify tasks in project {project.id}")
+        true -> Result.Ok(applyUnassign(task))
+
+fn applySetStatus(t: Task, next: Status) -> Task
+    ? "Unchecked: writes new status onto the task."
+    Task.update(t, status = next)
+
+fn setStatusChecked(t: Task, next: Status) -> Result<Task, String>
+    ? "Checks the transition rule before updating. Fails on forbidden transitions."
+    match Validation.canTransitionTo(t.status, next)
+        false -> Result.Err("Invalid transition")
+        true -> Result.Ok(applySetStatus(t, next))
+
+fn setStatus(actor: User, project: Project, task: Task, next: Status) -> Result<Task, String>
+    ? "Moves a task to a new status. Actor must have project write access and the"
+      "transition must be allowed by Validation.canTransitionTo."
+    match Validation.canModifyProject(actor, project)
+        false -> Result.Err("Actor {actor.id} cannot change task status in project {project.id}")
+        true -> setStatusChecked(task, next)
+
+fn applySetPriority(t: Task, next: Priority) -> Task
+    ? "Unchecked: writes new priority onto the task."
+    Task.update(t, priority = next)
+
+fn setPriority(actor: User, project: Project, task: Task, next: Priority) -> Result<Task, String>
+    ? "Changes the task's priority. Actor must have project write access (owner or"
+      "Admin). Escalation to Critical does not require Admin here — only assignment"
+      "of a Critical task tightens the rule, via canAssignAtPriority."
+    match Validation.canModifyProject(actor, project)
+        false -> Result.Err("Actor {actor.id} cannot change task priority in project {project.id}")
+        true -> Result.Ok(applySetPriority(task, next))
+
+fn priorityLabel(priority: Priority) -> String
+    ? "Human-readable label for a priority level. Used by describeTask so any caller"
+      "that prints a Task sees its priority consistently."
+    match priority
+        Priority.Low -> "Low"
+        Priority.Medium -> "Medium"
+        Priority.High -> "High"
+        Priority.Critical -> "Critical"
+
+verify priorityLabel
+    priorityLabel(Priority.Low) => "Low"
+    priorityLabel(Priority.Medium) => "Medium"
+    priorityLabel(Priority.High) => "High"
+    priorityLabel(Priority.Critical) => "Critical"
+
+fn describeTask(t: Task) -> String
+    ? "Compact, caller-facing representation of a Task. Always includes priority so"
+      "priority is visible in every task representation exposed to callers."
+    "Task(id={t.id}, project={t.projectId}, title={t.title}, priority={priorityLabel(t.priority)})"
+
+verify describeTask
+    describeTask(Task(id = "t1", projectId = "p1", title = "Write docs", status = Status.Todo, priority = Priority.Medium, assigneeId = Option.None, createdByUserId = "u1")) => "Task(id=t1, project=p1, title=Write docs, priority=Medium)"
+    describeTask(Task(id = "t2", projectId = "p1", title = "Ship", status = Status.Todo, priority = Priority.Critical, assigneeId = Option.None, createdByUserId = "u1")) => "Task(id=t2, project=p1, title=Ship, priority=Critical)"

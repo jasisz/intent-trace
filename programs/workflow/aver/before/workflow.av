@@ -1,0 +1,209 @@
+module Workflow
+    intent =
+        "Expense-report approval workflow. Each report moves through Draft → Submitted →"
+        "Approved or Rejected, and Approved reports can finally be Paid. Transitions are"
+        "guarded: submitting requires non-empty title and positive amount; approval is"
+        "gated by the approver's authority limit; payment requires a prior approval."
+        "Every transition is recorded in an audit trail attached to the report."
+
+decision StatesAsClosedVariant
+    date = "2026-04-16"
+    reason =
+        "Expense reports have a small, fixed set of lifecycle states. Closing the variant"
+        "lets the type-checker flag any future code path that forgets to handle one."
+        "String-typed status fields would silently accept typos and new values."
+    chosen = "SumTypeStatus"
+    rejected = ["StringStatus", "IntCodeStatus"]
+    impacts = [statusOf, submitReport, approveReport, rejectReport, payReport, isTerminal]
+
+decision AuditTrailInline
+    date = "2026-04-16"
+    reason =
+        "Callers routinely need to show who did what when. Storing events on the report"
+        "keeps replay and explanation queries cheap. A separate audit store would force"
+        "every consumer to join two sources."
+    chosen = "InlineAuditLog"
+    rejected = ["ExternalAuditStore", "NoAuditLog"]
+    impacts = [submitReport, approveReport, rejectReport, payReport, eventsOf]
+
+record Money
+    cents: Int
+
+record User
+    id: String
+    name: String
+    approvalLimitCents: Int
+
+type Status
+    Draft
+    Submitted
+    Approved
+    Rejected
+    Paid
+
+record Event
+    timestampMs: Int
+    actorId: String
+    note: String
+
+record Report
+    id: String
+    title: String
+    amount: Money
+    submitterId: String
+    status: Status
+    events: List<Event>
+
+fn emptyReport(id: String, submitterId: String) -> Report
+    ? "Creates a fresh Draft report with no title, zero amount, and no events."
+    Report(
+        id = id,
+        title = "",
+        amount = Money(cents = 0),
+        submitterId = submitterId,
+        status = Status.Draft,
+        events = []
+    )
+
+fn statusOf(r: Report) -> Status
+    ? "Returns the current status of the report."
+    r.status
+
+verify statusOf
+    statusOf(emptyReport("R1", "U1")) => Status.Draft
+
+fn eventsOf(r: Report) -> List<Event>
+    ? "Returns the audit trail events in chronological order (oldest first)."
+    List.reverse(r.events)
+
+fn recordEvent(r: Report, e: Event) -> Report
+    ? "Prepends an event to the internal events list (so newest is at head)."
+    Report.update(r, events = List.prepend(e, r.events))
+
+fn withTitleAndAmount(r: Report, title: String, amount: Money) -> Report
+    ? "Updates title and amount on a report. Intended for Draft reports only."
+    Report.update(r, title = title, amount = amount)
+
+fn amountIsPositive(m: Money) -> Bool
+    ? "True if the money amount is strictly positive."
+    m.cents > 0
+
+verify amountIsPositive
+    amountIsPositive(Money(cents = 100)) => true
+    amountIsPositive(Money(cents = 0)) => false
+    amountIsPositive(Money(cents = -1)) => false
+
+fn titleIsPresent(r: Report) -> Bool
+    ? "True if the report title is non-empty."
+    String.len(r.title) > 0
+
+verify titleIsPresent
+    titleIsPresent(emptyReport("R1", "U1")) => false
+
+fn applySubmit(r: Report, actorId: String, timestampMs: Int) -> Report
+    ? "Unchecked: marks the report as Submitted and logs the event."
+    withStatus = Report.update(r, status = Status.Submitted)
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "submitted"))
+
+fn submitValidated(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
+    ? "Submit path taken when the report is already known to be Draft. Checks invariants."
+    match titleIsPresent(r)
+        false -> Result.Err("Report title must not be empty")
+        true -> submitValidatedAmount(r, actorId, timestampMs)
+
+fn submitValidatedAmount(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
+    ? "Amount check after title check."
+    match amountIsPositive(r.amount)
+        false -> Result.Err("Report amount must be positive")
+        true -> Result.Ok(applySubmit(r, actorId, timestampMs))
+
+fn submitReport(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
+    ? "Moves a Draft report to Submitted. Fails if status is not Draft or invariants violated."
+    match r.status
+        Status.Draft -> submitValidated(r, actorId, timestampMs)
+        Status.Submitted -> Result.Err("Report already submitted")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report was rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+verify submitReport
+    submitReport(emptyReport("R1", "U1"), "U1", 1000) => Result.Err("Report title must not be empty")
+
+fn approverHasAuthority(approver: User, amount: Money) -> Bool
+    ? "True if the approver's limit covers the report amount."
+    approver.approvalLimitCents >= amount.cents
+
+verify approverHasAuthority
+    approverHasAuthority(User(id = "M", name = "M", approvalLimitCents = 10000), Money(cents = 5000)) => true
+    approverHasAuthority(User(id = "M", name = "M", approvalLimitCents = 100), Money(cents = 5000)) => false
+
+fn applyApprove(r: Report, approver: User, timestampMs: Int) -> Report
+    ? "Unchecked: marks the report as Approved and records who approved."
+    withStatus = Report.update(r, status = Status.Approved)
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = approver.id, note = "approved"))
+
+fn approveIfAuthorized(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
+    ? "Approves the report only if the approver's limit covers the amount."
+    match approverHasAuthority(approver, r.amount)
+        false -> Result.Err("Approver {approver.id} limit too low for amount")
+        true -> Result.Ok(applyApprove(r, approver, timestampMs))
+
+fn approveReport(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
+    ? "Moves a Submitted report to Approved. Approver must have sufficient authority."
+    match r.status
+        Status.Submitted -> approveIfAuthorized(r, approver, timestampMs)
+        Status.Draft -> Result.Err("Cannot approve a Draft report")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report was rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+fn applyReject(r: Report, actorId: String, reason: String, timestampMs: Int) -> Report
+    ? "Unchecked: marks the report as Rejected and records the reason in the event log."
+    withStatus = Report.update(r, status = Status.Rejected)
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "rejected: {reason}"))
+
+fn rejectReport(r: Report, actorId: String, reason: String, timestampMs: Int) -> Result<Report, String>
+    ? "Moves a Submitted report to Rejected with a reason."
+    match r.status
+        Status.Submitted -> Result.Ok(applyReject(r, actorId, reason, timestampMs))
+        Status.Draft -> Result.Err("Cannot reject a Draft report")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report already rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+fn applyPay(r: Report, actorId: String, timestampMs: Int) -> Report
+    ? "Unchecked: marks the report as Paid and records the payment event."
+    withStatus = Report.update(r, status = Status.Paid)
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "paid"))
+
+fn payReport(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
+    ? "Moves an Approved report to Paid."
+    match r.status
+        Status.Approved -> Result.Ok(applyPay(r, actorId, timestampMs))
+        Status.Draft -> Result.Err("Cannot pay a Draft report")
+        Status.Submitted -> Result.Err("Report must be approved before payment")
+        Status.Rejected -> Result.Err("Cannot pay a rejected report")
+        Status.Paid -> Result.Err("Report already paid")
+
+fn isTerminal(s: Status) -> Bool
+    ? "True if the state does not permit further transitions."
+    match s
+        Status.Paid -> true
+        Status.Rejected -> true
+        Status.Draft -> false
+        Status.Submitted -> false
+        Status.Approved -> false
+
+verify isTerminal
+    isTerminal(Status.Draft) => false
+    isTerminal(Status.Submitted) => false
+    isTerminal(Status.Approved) => false
+    isTerminal(Status.Rejected) => true
+    isTerminal(Status.Paid) => true
+
+fn main() -> Unit
+    ! [Console.print]
+    r = emptyReport("R1", "U1")
+    r1 = withTitleAndAmount(r, "Travel - Q2", Money(cents = 45000))
+    Console.print("Submit:")
+    Console.print(submitReport(r1, "U1", 1000))

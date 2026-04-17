@@ -1,0 +1,23 @@
+{
+  "started": "2026-04-16T23:52:58",
+  "models": {
+    "b": "claude-haiku-4-5-20251001",
+    "judges": {
+      "opus": "claude-opus-4-7",
+      "sonnet": "claude-sonnet-4-6",
+      "haiku": "claude-haiku-4-5-20251001"
+    }
+  },
+  "plan": [
+    {
+      "program": "inventory",
+      "prompts": [
+        "atomic_batch_operations",
+        "extract_reservation_module",
+        "make_harder_to_lose_stock",
+        "per_warehouse_reorder_points",
+        "track_expiration_dates"
+      ]
+    }
+  ]
+}

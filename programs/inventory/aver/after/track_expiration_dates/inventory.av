@@ -1,0 +1,525 @@
+module Inventory
+    intent =
+        "Multi-warehouse inventory with per-SKU dated batches, reservations, and reorder policy."
+        "Stock is a FIFO queue of dated batches (earliest expiration first) so fulfillment"
+        "consumes older stock before newer. Reserved units are still tracked separately from"
+        "on-hand so pending orders do not silently over-commit. Operations return Result to"
+        "make failure modes explicit."
+
+decision SeparateAvailableAndReserved
+    date = "2026-04-16"
+    reason =
+        "Reserved stock represents orders that have been accepted but not yet shipped."
+        "Collapsing reserved into available would allow a second reservation to over-commit"
+        "the same physical units. Tracking them separately makes the invariant reserved <= onHand"
+        "checkable at any point."
+    chosen = "SplitAvailableReserved"
+    rejected = ["SingleAvailableCounter", "NegativeAvailableAsReserved"]
+    impacts = [reserveStock, fulfillReservation, releaseReservation, availableStock]
+
+decision ResultOverException
+    date = "2026-04-16"
+    reason =
+        "Invalid operations (unknown warehouse, negative qty, over-reserve) are expected"
+        "at runtime — clients need to branch on them. Errors-as-values keep every call site"
+        "obvious about what can fail."
+    chosen = "ResultReturns"
+    rejected = ["ExceptionsOrPanics", "SilentNoop"]
+    impacts = [receiveShipment, reserveStock, releaseReservation, fulfillReservation, rebalance]
+
+decision BatchesWithExpirationFifo
+    date = "2026-04-16"
+    reason =
+        "Real warehouses receive the same SKU multiple times with different expiration dates,"
+        "and downstream decisions (ship, discount, purge) depend on per-batch dates. A single"
+        "onHand counter erases this information. Storing batches as a list kept sorted by"
+        "expiration date makes 'ship oldest first' the natural head-of-list operation and keeps"
+        "'expired as of today' a simple scan. Reservations stay as a scalar because they only"
+        "commit units, not specific batches; fulfillment is what materializes the FIFO choice."
+    chosen = "SortedBatchListPerSku"
+    rejected = ["SingleOnHandCounter", "UnsortedBatchesSearchedOnFulfill", "BatchIdAssignedOnReserve"]
+    impacts = [receiveShipment, fulfillReservation, expiredQuantity, totalOnHand, availableStock]
+
+record Sku
+    id: String
+    name: String
+    reorderPoint: Int
+
+record Warehouse
+    id: String
+    location: String
+
+record Batch
+    qty: Int
+    expiresOn: Int
+
+record StockLevel
+    batches: List<Batch>
+    reserved: Int
+
+record Inventory
+    skus: Map<String, Sku>
+    warehouses: Map<String, Warehouse>
+    levels: Map<String, Map<String, StockLevel>>
+
+fn emptyInventory() -> Inventory
+    ? "Builds an empty inventory with no warehouses, skus, or stock."
+    Inventory(skus = Map.fromList([]), warehouses = Map.fromList([]), levels = Map.fromList([]))
+
+fn registerSku(inv: Inventory, s: Sku) -> Inventory
+    ? "Adds or replaces an SKU definition."
+    Inventory.update(inv, skus = Map.set(inv.skus, s.id, s))
+
+fn registerWarehouse(inv: Inventory, w: Warehouse) -> Inventory
+    ? "Adds or replaces a warehouse definition."
+    Inventory.update(inv, warehouses = Map.set(inv.warehouses, w.id, w))
+
+fn zeroLevel() -> StockLevel
+    ? "The stock level used for warehouse/sku pairs with no recorded stock yet."
+    StockLevel(batches = [], reserved = 0)
+
+fn getLevelFromMap(perSku: Map<String, StockLevel>, skuId: String) -> StockLevel
+    ? "Looks up a stock level in the per-sku submap, defaulting to zero."
+    match Map.get(perSku, skuId)
+        Option.None -> zeroLevel()
+        Option.Some(lvl) -> lvl
+
+verify getLevelFromMap
+    getLevelFromMap(Map.fromList([]), "S1") => StockLevel(batches = [], reserved = 0)
+    getLevelFromMap(Map.fromList([("S1", StockLevel(batches = [Batch(qty = 5, expiresOn = 10)], reserved = 2))]), "S1") => StockLevel(batches = [Batch(qty = 5, expiresOn = 10)], reserved = 2)
+    getLevelFromMap(Map.fromList([("S1", StockLevel(batches = [], reserved = 0))]), "S2") => StockLevel(batches = [], reserved = 0)
+
+fn getLevel(inv: Inventory, warehouseId: String, skuId: String) -> StockLevel
+    ? "Returns the stock level for (warehouse, sku), or zero if none recorded yet."
+    match Map.get(inv.levels, warehouseId)
+        Option.None -> zeroLevel()
+        Option.Some(perSku) -> getLevelFromMap(perSku, skuId)
+
+verify getLevel
+    getLevel(emptyInventory(), "W1", "S1") => StockLevel(batches = [], reserved = 0)
+
+fn perSkuMap(inv: Inventory, warehouseId: String) -> Map<String, StockLevel>
+    ? "Returns the existing per-sku submap for a warehouse, or a new empty map."
+    match Map.get(inv.levels, warehouseId)
+        Option.None -> Map.fromList([])
+        Option.Some(m) -> m
+
+verify perSkuMap
+    perSkuMap(emptyInventory(), "W1") => Map.fromList([])
+
+fn setLevel(inv: Inventory, warehouseId: String, skuId: String, lvl: StockLevel) -> Inventory
+    ? "Stores a stock level for (warehouse, sku). Overwrites any previous value."
+    updated = Map.set(perSkuMap(inv, warehouseId), skuId, lvl)
+    Inventory.update(inv, levels = Map.set(inv.levels, warehouseId, updated))
+
+verify setLevel
+    getLevel(setLevel(emptyInventory(), "W1", "S1", StockLevel(batches = [Batch(qty = 4, expiresOn = 10)], reserved = 1)), "W1", "S1") => StockLevel(batches = [Batch(qty = 4, expiresOn = 10)], reserved = 1)
+
+fn sumBatchQty(batches: List<Batch>) -> Int
+    ? "Folds batch quantities into a single on-hand total."
+    match batches
+        [] -> 0
+        [b, ..rest] -> b.qty + sumBatchQty(rest)
+
+verify sumBatchQty
+    sumBatchQty([]) => 0
+    sumBatchQty([Batch(qty = 3, expiresOn = 10)]) => 3
+    sumBatchQty([Batch(qty = 3, expiresOn = 10), Batch(qty = 4, expiresOn = 20)]) => 7
+
+fn onHandOf(lvl: StockLevel) -> Int
+    ? "Total on-hand units for a stock level: sum of all batch quantities."
+    sumBatchQty(lvl.batches)
+
+verify onHandOf
+    onHandOf(StockLevel(batches = [], reserved = 0)) => 0
+    onHandOf(StockLevel(batches = [Batch(qty = 5, expiresOn = 10)], reserved = 2)) => 5
+
+fn availableStock(inv: Inventory, warehouseId: String, skuId: String) -> Int
+    ? "Returns units currently available for new reservations: onHand minus reserved."
+    lvl = getLevel(inv, warehouseId, skuId)
+    onHandOf(lvl) - lvl.reserved
+
+verify availableStock
+    availableStock(emptyInventory(), "W1", "S1") => 0
+
+fn knownWarehouse(inv: Inventory, warehouseId: String) -> Bool
+    ? "Returns true if the warehouse has been registered."
+    match Map.get(inv.warehouses, warehouseId)
+        Option.None -> false
+        Option.Some(_) -> true
+
+verify knownWarehouse
+    knownWarehouse(emptyInventory(), "W1") => false
+    knownWarehouse(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")), "W1") => true
+    knownWarehouse(registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC")), "W2") => false
+
+fn knownSku(inv: Inventory, skuId: String) -> Bool
+    ? "Returns true if the sku has been registered."
+    match Map.get(inv.skus, skuId)
+        Option.None -> false
+        Option.Some(_) -> true
+
+verify knownSku
+    knownSku(emptyInventory(), "S1") => false
+    knownSku(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)), "S1") => true
+    knownSku(registerSku(emptyInventory(), Sku(id = "S1", name = "Widget", reorderPoint = 5)), "S2") => false
+
+fn insertBatchSorted(batches: List<Batch>, b: Batch) -> List<Batch>
+    ? "Inserts a batch into a FIFO-by-expiration list, keeping earliest-expiring at the head."
+    match batches
+        [] -> [b]
+        [h, ..rest] -> match b.expiresOn <= h.expiresOn
+            true -> List.prepend(b, batches)
+            false -> List.prepend(h, insertBatchSorted(rest, b))
+
+verify insertBatchSorted
+    insertBatchSorted([], Batch(qty = 3, expiresOn = 10)) => [Batch(qty = 3, expiresOn = 10)]
+    insertBatchSorted([Batch(qty = 2, expiresOn = 20)], Batch(qty = 5, expiresOn = 10)) => [Batch(qty = 5, expiresOn = 10), Batch(qty = 2, expiresOn = 20)]
+    insertBatchSorted([Batch(qty = 2, expiresOn = 10)], Batch(qty = 5, expiresOn = 20)) => [Batch(qty = 2, expiresOn = 10), Batch(qty = 5, expiresOn = 20)]
+
+fn seededInventory() -> Inventory
+    ? "Builds a small fixture with one warehouse and one sku — used by verify blocks."
+    inv1 = registerWarehouse(emptyInventory(), Warehouse(id = "W1", location = "NYC"))
+    registerSku(inv1, Sku(id = "S1", name = "Widget", reorderPoint = 5))
+
+verify seededInventory
+    knownWarehouse(seededInventory(), "W1") => true
+    knownSku(seededInventory(), "S1") => true
+
+fn applyReceive(inv: Inventory, warehouseId: String, skuId: String, qty: Int, expiresOn: Int) -> Inventory
+    ? "Unchecked: records a new dated batch at (warehouse, sku). Assumes inputs are valid."
+    lvl = getLevel(inv, warehouseId, skuId)
+    newBatches = insertBatchSorted(lvl.batches, Batch(qty = qty, expiresOn = expiresOn))
+    setLevel(inv, warehouseId, skuId, StockLevel(batches = newBatches, reserved = lvl.reserved))
+
+verify applyReceive
+    onHandOf(getLevel(applyReceive(seededInventory(), "W1", "S1", 7, 100), "W1", "S1")) => 7
+
+fn receiveShipmentChecked(inv: Inventory, warehouseId: String, skuId: String, qty: Int, expiresOn: Int) -> Result<Inventory, String>
+    ? "Receives a dated shipment assuming qty is positive. Checks warehouse and sku are known."
+    match knownWarehouse(inv, warehouseId)
+        false -> Result.Err("Unknown warehouse: {warehouseId}")
+        true -> match knownSku(inv, skuId)
+            false -> Result.Err("Unknown sku: {skuId}")
+            true -> Result.Ok(applyReceive(inv, warehouseId, skuId, qty, expiresOn))
+
+verify receiveShipmentChecked
+    receiveShipmentChecked(seededInventory(), "W2", "S1", 5, 100) => Result.Err("Unknown warehouse: W2")
+    receiveShipmentChecked(seededInventory(), "W1", "S2", 5, 100) => Result.Err("Unknown sku: S2")
+    receiveShipmentChecked(seededInventory(), "W1", "S1", 5, 100) => Result.Ok(applyReceive(seededInventory(), "W1", "S1", 5, 100))
+
+fn receiveShipment(inv: Inventory, warehouseId: String, skuId: String, qty: Int, expiresOn: Int) -> Result<Inventory, String>
+    ? "Records a dated shipment batch. Fails on unknown warehouse/sku or non-positive qty."
+    match qty <= 0
+        true -> Result.Err("Shipment qty must be positive")
+        false -> receiveShipmentChecked(inv, warehouseId, skuId, qty, expiresOn)
+
+verify receiveShipment
+    receiveShipment(emptyInventory(), "W1", "S1", 5, 100) => Result.Err("Unknown warehouse: W1")
+    receiveShipment(emptyInventory(), "W1", "S1", 0, 100) => Result.Err("Shipment qty must be positive")
+    receiveShipment(seededInventory(), "W1", "S1", 5, 100) => Result.Ok(applyReceive(seededInventory(), "W1", "S1", 5, 100))
+
+fn stockedInventory() -> Inventory
+    ? "Seeded inventory with 10 units of S1 at W1 expiring on day 100 — used by verify blocks."
+    applyReceive(seededInventory(), "W1", "S1", 10, 100)
+
+verify stockedInventory
+    onHandOf(getLevel(stockedInventory(), "W1", "S1")) => 10
+
+fn applyReserve(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: adds qty to reserved at (warehouse, sku). Assumes inputs are valid and sufficient."
+    lvl = getLevel(inv, warehouseId, skuId)
+    setLevel(inv, warehouseId, skuId, StockLevel(batches = lvl.batches, reserved = lvl.reserved + qty))
+
+verify applyReserve
+    availableStock(applyReserve(stockedInventory(), "W1", "S1", 3), "W1", "S1") => 7
+
+fn reserveIfAvailable(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Checks that qty is available before reserving."
+    lvl = getLevel(inv, warehouseId, skuId)
+    avail = onHandOf(lvl) - lvl.reserved
+    match qty > avail
+        true -> Result.Err("Insufficient available stock: need {qty}, have {avail}")
+        false -> Result.Ok(applyReserve(inv, warehouseId, skuId, qty))
+
+verify reserveIfAvailable
+    reserveIfAvailable(stockedInventory(), "W1", "S1", 11) => Result.Err("Insufficient available stock: need 11, have 10")
+    reserveIfAvailable(stockedInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(stockedInventory(), "W1", "S1", 3))
+
+fn reserveStockChecked(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Reserves after warehouse+sku validation. Delegates to reserveIfAvailable."
+    match knownWarehouse(inv, warehouseId)
+        false -> Result.Err("Unknown warehouse: {warehouseId}")
+        true -> match knownSku(inv, skuId)
+            false -> Result.Err("Unknown sku: {skuId}")
+            true -> reserveIfAvailable(inv, warehouseId, skuId, qty)
+
+verify reserveStockChecked
+    reserveStockChecked(stockedInventory(), "W2", "S1", 3) => Result.Err("Unknown warehouse: W2")
+    reserveStockChecked(stockedInventory(), "W1", "S2", 3) => Result.Err("Unknown sku: S2")
+    reserveStockChecked(stockedInventory(), "W1", "S1", 3) => Result.Ok(applyReserve(stockedInventory(), "W1", "S1", 3))
+
+fn reserveStock(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Reserves qty for an order. Fails if qty would exceed available (onHand - reserved)."
+    match qty <= 0
+        true -> Result.Err("Reserve qty must be positive")
+        false -> reserveStockChecked(inv, warehouseId, skuId, qty)
+
+verify reserveStock
+    reserveStock(stockedInventory(), "W1", "S1", 0) => Result.Err("Reserve qty must be positive")
+    reserveStock(stockedInventory(), "W1", "S1", 20) => Result.Err("Insufficient available stock: need 20, have 10")
+    reserveStock(stockedInventory(), "W1", "S1", 4) => Result.Ok(applyReserve(stockedInventory(), "W1", "S1", 4))
+
+fn reservedInventory() -> Inventory
+    ? "Stocked inventory with 4 units reserved — used by release/fulfill verify blocks."
+    applyReserve(stockedInventory(), "W1", "S1", 4)
+
+verify reservedInventory
+    availableStock(reservedInventory(), "W1", "S1") => 6
+
+fn applyRelease(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: subtracts qty from reserved. Assumes qty <= current reserved."
+    lvl = getLevel(inv, warehouseId, skuId)
+    setLevel(inv, warehouseId, skuId, StockLevel(batches = lvl.batches, reserved = lvl.reserved - qty))
+
+verify applyRelease
+    availableStock(applyRelease(reservedInventory(), "W1", "S1", 4), "W1", "S1") => 10
+
+fn releaseIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Releases qty from reserved, failing if qty exceeds what is currently reserved."
+    lvl = getLevel(inv, warehouseId, skuId)
+    match qty > lvl.reserved
+        true -> Result.Err("Cannot release more than reserved: requested {qty}, reserved {lvl.reserved}")
+        false -> Result.Ok(applyRelease(inv, warehouseId, skuId, qty))
+
+verify releaseIfReserved
+    releaseIfReserved(reservedInventory(), "W1", "S1", 5) => Result.Err("Cannot release more than reserved: requested 5, reserved 4")
+    releaseIfReserved(reservedInventory(), "W1", "S1", 3) => Result.Ok(applyRelease(reservedInventory(), "W1", "S1", 3))
+
+fn releaseReservation(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Cancels a previously made reservation. Fails if qty exceeds current reserved."
+    match qty <= 0
+        true -> Result.Err("Release qty must be positive")
+        false -> releaseIfReserved(inv, warehouseId, skuId, qty)
+
+verify releaseReservation
+    releaseReservation(reservedInventory(), "W1", "S1", 0) => Result.Err("Release qty must be positive")
+    releaseReservation(reservedInventory(), "W1", "S1", 4) => Result.Ok(applyRelease(reservedInventory(), "W1", "S1", 4))
+
+fn consumeBatches(batches: List<Batch>, qty: Int) -> List<Batch>
+    ? "Removes qty units from the head of a FIFO batch list. Empty batches are dropped."
+    match qty <= 0
+        true -> batches
+        false -> match batches
+            [] -> []
+            [h, ..rest] -> match qty >= h.qty
+                true -> consumeBatches(rest, qty - h.qty)
+                false -> List.prepend(Batch(qty = h.qty - qty, expiresOn = h.expiresOn), rest)
+
+verify consumeBatches
+    consumeBatches([], 3) => []
+    consumeBatches([Batch(qty = 5, expiresOn = 10)], 3) => [Batch(qty = 2, expiresOn = 10)]
+    consumeBatches([Batch(qty = 5, expiresOn = 10)], 5) => []
+    consumeBatches([Batch(qty = 2, expiresOn = 10), Batch(qty = 4, expiresOn = 20)], 3) => [Batch(qty = 3, expiresOn = 20)]
+
+fn applyFulfill(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: removes qty from both batch queue (FIFO) and reserved. Assumes qty <= reserved."
+    lvl = getLevel(inv, warehouseId, skuId)
+    newBatches = consumeBatches(lvl.batches, qty)
+    setLevel(inv, warehouseId, skuId, StockLevel(batches = newBatches, reserved = lvl.reserved - qty))
+
+verify applyFulfill
+    onHandOf(getLevel(applyFulfill(reservedInventory(), "W1", "S1", 4), "W1", "S1")) => 6
+
+fn fulfillIfReserved(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Ships qty, failing if qty exceeds what is currently reserved at this (warehouse, sku)."
+    lvl = getLevel(inv, warehouseId, skuId)
+    match qty > lvl.reserved
+        true -> Result.Err("Cannot fulfill more than reserved: requested {qty}, reserved {lvl.reserved}")
+        false -> Result.Ok(applyFulfill(inv, warehouseId, skuId, qty))
+
+verify fulfillIfReserved
+    fulfillIfReserved(reservedInventory(), "W1", "S1", 5) => Result.Err("Cannot fulfill more than reserved: requested 5, reserved 4")
+    fulfillIfReserved(reservedInventory(), "W1", "S1", 3) => Result.Ok(applyFulfill(reservedInventory(), "W1", "S1", 3))
+
+fn fulfillReservation(inv: Inventory, warehouseId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Ships qty out: consumes from oldest batch first, also removes from reserved. Fails if qty exceeds reserved."
+    match qty <= 0
+        true -> Result.Err("Fulfill qty must be positive")
+        false -> fulfillIfReserved(inv, warehouseId, skuId, qty)
+
+verify fulfillReservation
+    fulfillReservation(reservedInventory(), "W1", "S1", 0) => Result.Err("Fulfill qty must be positive")
+    fulfillReservation(reservedInventory(), "W1", "S1", 4) => Result.Ok(applyFulfill(reservedInventory(), "W1", "S1", 4))
+
+fn takeBatches(batches: List<Batch>, qty: Int) -> List<Batch>
+    ? "Returns the oldest qty units from a FIFO batch list, preserving per-batch expiration dates."
+    match qty <= 0
+        true -> []
+        false -> match batches
+            [] -> []
+            [h, ..rest] -> match qty >= h.qty
+                true -> List.prepend(h, takeBatches(rest, qty - h.qty))
+                false -> [Batch(qty = qty, expiresOn = h.expiresOn)]
+
+verify takeBatches
+    takeBatches([], 3) => []
+    takeBatches([Batch(qty = 5, expiresOn = 10)], 3) => [Batch(qty = 3, expiresOn = 10)]
+    takeBatches([Batch(qty = 2, expiresOn = 10), Batch(qty = 4, expiresOn = 20)], 3) => [Batch(qty = 2, expiresOn = 10), Batch(qty = 1, expiresOn = 20)]
+
+fn mergeBatches(existing: List<Batch>, incoming: List<Batch>) -> List<Batch>
+    ? "Merges a list of batches into a sorted list one at a time, keeping earliest-expiring at the head."
+    match incoming
+        [] -> existing
+        [h, ..rest] -> mergeBatches(insertBatchSorted(existing, h), rest)
+
+verify mergeBatches
+    mergeBatches([], []) => []
+    mergeBatches([Batch(qty = 4, expiresOn = 20)], [Batch(qty = 3, expiresOn = 10)]) => [Batch(qty = 3, expiresOn = 10), Batch(qty = 4, expiresOn = 20)]
+    mergeBatches([], [Batch(qty = 3, expiresOn = 10), Batch(qty = 4, expiresOn = 20)]) => [Batch(qty = 3, expiresOn = 10), Batch(qty = 4, expiresOn = 20)]
+
+fn twoWarehouseInventory() -> Inventory
+    ? "Fixture with two warehouses (W1, W2) and sku S1 stocked only at W1 — used by rebalance verify."
+    base = registerWarehouse(stockedInventory(), Warehouse(id = "W2", location = "LA"))
+    base
+
+verify twoWarehouseInventory
+    onHandOf(getLevel(twoWarehouseInventory(), "W1", "S1")) => 10
+    onHandOf(getLevel(twoWarehouseInventory(), "W2", "S1")) => 0
+
+fn applyRebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Inventory
+    ? "Unchecked: moves qty of unreserved stock from 'fromId' to 'toId', preserving batch dates."
+    fromLvl = getLevel(inv, fromId, skuId)
+    toLvl = getLevel(inv, toId, skuId)
+    moved = takeBatches(fromLvl.batches, qty)
+    remaining = consumeBatches(fromLvl.batches, qty)
+    withFrom = setLevel(inv, fromId, skuId, StockLevel(batches = remaining, reserved = fromLvl.reserved))
+    setLevel(withFrom, toId, skuId, StockLevel(batches = mergeBatches(toLvl.batches, moved), reserved = toLvl.reserved))
+
+verify applyRebalance
+    onHandOf(getLevel(applyRebalance(twoWarehouseInventory(), "W1", "W2", "S1", 3), "W1", "S1")) => 7
+    onHandOf(getLevel(applyRebalance(twoWarehouseInventory(), "W1", "W2", "S1", 3), "W2", "S1")) => 3
+
+fn rebalanceIfAvailable(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Rebalances after checking source has enough available stock."
+    fromLvl = getLevel(inv, fromId, skuId)
+    avail = onHandOf(fromLvl) - fromLvl.reserved
+    match qty > avail
+        true -> Result.Err("Insufficient stock at {fromId}: need {qty}, have {avail}")
+        false -> Result.Ok(applyRebalance(inv, fromId, toId, skuId, qty))
+
+verify rebalanceIfAvailable
+    rebalanceIfAvailable(twoWarehouseInventory(), "W1", "W2", "S1", 11) => Result.Err("Insufficient stock at W1: need 11, have 10")
+    rebalanceIfAvailable(twoWarehouseInventory(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(twoWarehouseInventory(), "W1", "W2", "S1", 3))
+
+fn rebalanceChecked(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Rebalances after warehouse and sku validation."
+    match knownWarehouse(inv, fromId)
+        false -> Result.Err("Unknown warehouse: {fromId}")
+        true -> match knownWarehouse(inv, toId)
+            false -> Result.Err("Unknown warehouse: {toId}")
+            true -> match knownSku(inv, skuId)
+                false -> Result.Err("Unknown sku: {skuId}")
+                true -> rebalanceIfAvailable(inv, fromId, toId, skuId, qty)
+
+verify rebalanceChecked
+    rebalanceChecked(twoWarehouseInventory(), "W3", "W2", "S1", 3) => Result.Err("Unknown warehouse: W3")
+    rebalanceChecked(twoWarehouseInventory(), "W1", "W3", "S1", 3) => Result.Err("Unknown warehouse: W3")
+    rebalanceChecked(twoWarehouseInventory(), "W1", "W2", "S2", 3) => Result.Err("Unknown sku: S2")
+    rebalanceChecked(twoWarehouseInventory(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(twoWarehouseInventory(), "W1", "W2", "S1", 3))
+
+fn rebalance(inv: Inventory, fromId: String, toId: String, skuId: String, qty: Int) -> Result<Inventory, String>
+    ? "Transfers qty of unreserved stock from 'fromId' warehouse to 'toId' warehouse."
+    match qty <= 0
+        true -> Result.Err("Rebalance qty must be positive")
+        false -> rebalanceChecked(inv, fromId, toId, skuId, qty)
+
+verify rebalance
+    rebalance(twoWarehouseInventory(), "W1", "W2", "S1", 0) => Result.Err("Rebalance qty must be positive")
+    rebalance(twoWarehouseInventory(), "W1", "W2", "S1", 3) => Result.Ok(applyRebalance(twoWarehouseInventory(), "W1", "W2", "S1", 3))
+
+fn reorderPointForSku(inv: Inventory, skuId: String) -> Option<Int>
+    ? "Looks up the reorder point of a registered sku."
+    match Map.get(inv.skus, skuId)
+        Option.None -> Option.None
+        Option.Some(sku) -> Option.Some(sku.reorderPoint)
+
+verify reorderPointForSku
+    reorderPointForSku(emptyInventory(), "S1") => Option.None
+    reorderPointForSku(seededInventory(), "S1") => Option.Some(5)
+
+fn needsReorder(inv: Inventory, warehouseId: String, skuId: String) -> Bool
+    ? "True when available stock at this warehouse falls at or below the sku's reorder point."
+    match reorderPointForSku(inv, skuId)
+        Option.None -> false
+        Option.Some(rp) -> availableStock(inv, warehouseId, skuId) <= rp
+
+verify needsReorder
+    needsReorder(emptyInventory(), "W1", "S1") => false
+    needsReorder(seededInventory(), "W1", "S1") => true
+    needsReorder(stockedInventory(), "W1", "S1") => false
+
+fn sumOnHand(inv: Inventory, skuId: String, warehouseIds: List<String>) -> Int
+    ? "Folds onHand across warehouse ids. Helper for totalOnHand."
+    match warehouseIds
+        [] -> 0
+        [wid, ..rest] -> onHandOf(getLevel(inv, wid, skuId)) + sumOnHand(inv, skuId, rest)
+
+verify sumOnHand
+    sumOnHand(stockedInventory(), "S1", []) => 0
+    sumOnHand(stockedInventory(), "S1", ["W1"]) => 10
+    sumOnHand(stockedInventory(), "S1", ["W1", "W2"]) => 10
+
+fn totalOnHand(inv: Inventory, skuId: String) -> Int
+    ? "Sums onHand across all warehouses for this sku."
+    sumOnHand(inv, skuId, Map.keys(inv.warehouses))
+
+verify totalOnHand
+    totalOnHand(emptyInventory(), "S1") => 0
+    totalOnHand(stockedInventory(), "S1") => 10
+
+fn expiredQtyInBatches(batches: List<Batch>, today: Int) -> Int
+    ? "Sums qty of batches whose expiresOn is strictly before today."
+    match batches
+        [] -> 0
+        [h, ..rest] -> match h.expiresOn < today
+            true -> h.qty + expiredQtyInBatches(rest, today)
+            false -> expiredQtyInBatches(rest, today)
+
+verify expiredQtyInBatches
+    expiredQtyInBatches([], 100) => 0
+    expiredQtyInBatches([Batch(qty = 3, expiresOn = 50), Batch(qty = 7, expiresOn = 200)], 100) => 3
+    expiredQtyInBatches([Batch(qty = 3, expiresOn = 50), Batch(qty = 7, expiresOn = 200)], 30) => 0
+    expiredQtyInBatches([Batch(qty = 3, expiresOn = 100)], 100) => 0
+
+fn expiredQuantity(inv: Inventory, warehouseId: String, skuId: String, today: Int) -> Int
+    ? "Quantity of (warehouse, sku) stock that has expired as of 'today'. Surfaces totals so"
+      "downstream callers can decide whether to purge, discount, or report — no policy here."
+    expiredQtyInBatches(getLevel(inv, warehouseId, skuId).batches, today)
+
+verify expiredQuantity
+    expiredQuantity(emptyInventory(), "W1", "S1", 100) => 0
+    expiredQuantity(applyReceive(applyReceive(seededInventory(), "W1", "S1", 3, 50), "W1", "S1", 7, 200), "W1", "S1", 100) => 3
+
+fn fifoDemo(today: Int) -> List<Batch>
+    ? "End-to-end FIFO check: receive two batches at different expiration dates, reserve and"
+      "fulfill 3 units, then return the remaining batch list. Used by verify to pin the"
+      "oldest-batch-first invariant."
+    inv1 = applyReceive(seededInventory(), "W1", "S1", 4, 50)
+    inv2 = applyReceive(inv1, "W1", "S1", 6, 200)
+    inv3 = applyReserve(inv2, "W1", "S1", 3)
+    inv4 = applyFulfill(inv3, "W1", "S1", 3)
+    getLevel(inv4, "W1", "S1").batches
+
+verify fifoDemo
+    fifoDemo(100) => [Batch(qty = 1, expiresOn = 50), Batch(qty = 6, expiresOn = 200)]
+
+fn main() -> Unit
+    ! [Console.print]
+    inv = emptyInventory()
+    inv1 = registerWarehouse(inv, Warehouse(id = "W1", location = "NYC"))
+    inv2 = registerSku(inv1, Sku(id = "S1", name = "Widget", reorderPoint = 10))
+    Console.print("Initial available:")
+    Console.print(availableStock(inv2, "W1", "S1"))
+    Console.print("Shipment of 20 expiring on day 100:")
+    Console.print(receiveShipment(inv2, "W1", "S1", 20, 100))

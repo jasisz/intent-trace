@@ -1,0 +1,51 @@
+module Models
+    intent =
+        "Core shared types for the task-manager domain: users, projects, tasks."
+        "Admin/Member/Viewer roles govern what operations are permitted. Tasks move"
+        "through Todo → InProgress → Done, with Blocked as an off-path state. A"
+        "Project also carries a list of delegated user ids — users that the owner"
+        "has temporarily granted owner-level modification rights on that project."
+    exposes [Role, Status, User, Project, Task]
+
+decision DelegationIsAProjectField
+    date = "2026-04-16"
+    reason =
+        "Delegations are scoped to a single project (an owner going on vacation"
+        "delegates rights on that project, not globally), so the natural home is"
+        "the Project record rather than a per-user structure. Storing the"
+        "delegated user ids as a closed list keeps permission checks a simple"
+        "membership test and keeps revocation a list removal."
+    chosen = "DelegateIdsOnProject"
+    rejected = ["DelegationsOnUser", "SeparateDelegationRecord"]
+    impacts = [Project, "isOwnerOrAdmin", "canModifyProject"]
+
+type Role
+    Admin
+    Member
+    Viewer
+
+type Status
+    Todo
+    InProgress
+    Done
+    Blocked
+
+record User
+    id: String
+    name: String
+    role: Role
+
+record Project
+    id: String
+    name: String
+    ownerId: String
+    memberIds: List<String>
+    delegateIds: List<String>
+
+record Task
+    id: String
+    projectId: String
+    title: String
+    status: Status
+    assigneeId: Option<String>
+    createdByUserId: String

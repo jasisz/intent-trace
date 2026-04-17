@@ -1,0 +1,39 @@
+module Models
+    intent =
+        "Core shared types for the task-manager domain: users, projects, tasks."
+        "Admin/Member/Viewer roles govern what operations are permitted. Tasks move"
+        "through Todo → InProgress → Done, with Blocked as an off-path state. Tasks"
+        "may declare dependsOnIds; a task cannot transition to Done until every"
+        "dependency is itself Done."
+    exposes [Role, Status, User, Project, Task]
+
+type Role
+    Admin
+    Member
+    Viewer
+
+type Status
+    Todo
+    InProgress
+    Done
+    Blocked
+
+record User
+    id: String
+    name: String
+    role: Role
+
+record Project
+    id: String
+    name: String
+    ownerId: String
+    memberIds: List<String>
+
+record Task
+    id: String
+    projectId: String
+    title: String
+    status: Status
+    assigneeId: Option<String>
+    createdByUserId: String
+    dependsOnIds: List<String>

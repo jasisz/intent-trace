@@ -1,0 +1,50 @@
+module Models
+    intent =
+        "Core shared types for the task-manager domain: users, projects, tasks."
+        "Admin/Member/Viewer roles govern what operations are permitted. Tasks move"
+        "through Todo → InProgress → Done, with Blocked as an off-path state."
+        "Projects carry an isArchived flag: archived projects are read-only and"
+        "reject any mutation of the project or of its tasks."
+    exposes [Role, Status, User, Project, Task]
+
+decision ArchivalAsBoolFieldOnProject
+    date = "2026-04-16"
+    reason =
+        "Archival is a binary lifecycle flag, not a new stage in a workflow: a project"
+        "is either active or archived, and archiving/unarchiving is symmetric. A Bool"
+        "field keeps the Project record a single source of truth and lets permission"
+        "predicates compose the check into existing rules without a parallel type."
+    chosen = "BoolFieldOnProject"
+    rejected = ["ProjectStateEnum", "SeparateArchiveRecord"]
+    impacts = [Project]
+
+type Role
+    Admin
+    Member
+    Viewer
+
+type Status
+    Todo
+    InProgress
+    Done
+    Blocked
+
+record User
+    id: String
+    name: String
+    role: Role
+
+record Project
+    id: String
+    name: String
+    ownerId: String
+    memberIds: List<String>
+    isArchived: Bool
+
+record Task
+    id: String
+    projectId: String
+    title: String
+    status: Status
+    assigneeId: Option<String>
+    createdByUserId: String

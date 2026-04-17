@@ -1,0 +1,103 @@
+module Projects
+    intent =
+        "Project lifecycle: create projects, manage membership, grant and revoke"
+        "delegations. Every mutation routes through permission checks, so callers"
+        "cannot bypass ownership rules."
+    depends [Models, Validation]
+    exposes [createProject, addMember, removeMember, grantDelegation, revokeDelegation]
+
+fn createProject(id: String, name: String, owner: User) -> Project
+    ? "Creates a new project with the given owner as sole member and no delegations."
+      "The owner is automatically included in memberIds so they can do any operation"
+      "that requires membership, without a separate `addMember` call."
+    Project(
+        id = id,
+        name = name,
+        ownerId = owner.id,
+        memberIds = [owner.id],
+        delegateIds = []
+    )
+
+verify createProject
+    createProject("p1", "Demo", User(id = "u1", name = "Alice", role = Role.Admin)) => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], delegateIds = [])
+
+fn alreadyMember(p: Project, userId: String) -> Bool
+    ? "True if userId is already a member (helper; same as isMember but inline here)."
+    List.contains(p.memberIds, userId)
+
+fn addMemberChecked(p: Project, memberId: String) -> Project
+    ? "Adds memberId to the project if not already present."
+    match alreadyMember(p, memberId)
+        true -> p
+        false -> Project.update(p, memberIds = List.prepend(memberId, p.memberIds))
+
+fn addMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
+    ? "Adds a user to the project. Only users who may modify the project (owner,"
+      "Admin, or an active delegate) are permitted."
+    match Validation.canModifyProject(actor, p)
+        false -> Result.Err("Only the owner, an Admin, or a delegate can modify project {p.id}")
+        true -> Result.Ok(addMemberChecked(p, memberId))
+
+fn removeFromList(ids: List<String>, target: String) -> List<String>
+    ? "Returns the list with all occurrences of target removed."
+    match ids
+        [] -> []
+        [head, ..tail] -> removeFromListRec(head, tail, target)
+
+fn removeFromListRec(head: String, tail: List<String>, target: String) -> List<String>
+    ? "Single-step helper for removeFromList."
+    match head == target
+        true -> removeFromList(tail, target)
+        false -> List.prepend(head, removeFromList(tail, target))
+
+fn removeMemberChecked(p: Project, memberId: String) -> Result<Project, String>
+    ? "Removes memberId unless they are the owner (owner cannot be removed)."
+    match memberId == p.ownerId
+        true -> Result.Err("Cannot remove the project owner")
+        false -> Result.Ok(Project.update(p, memberIds = removeFromList(p.memberIds, memberId)))
+
+fn removeMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
+    ? "Removes a user from the project. Only users who may modify the project (owner,"
+      "Admin, or an active delegate) are permitted; owner is protected."
+    match Validation.canModifyProject(actor, p)
+        false -> Result.Err("Only the owner, an Admin, or a delegate can modify project {p.id}")
+        true -> removeMemberChecked(p, memberId)
+
+fn alreadyDelegated(p: Project, userId: String) -> Bool
+    ? "True if userId already holds a delegation on this project."
+    List.contains(p.delegateIds, userId)
+
+fn grantDelegationChecked(p: Project, delegateId: String) -> Project
+    ? "Adds delegateId to the delegateIds list if not already present."
+    match alreadyDelegated(p, delegateId)
+        true -> p
+        false -> Project.update(p, delegateIds = List.prepend(delegateId, p.delegateIds))
+
+fn grantDelegation(actor: User, p: Project, delegateId: String) -> Result<Project, String>
+    ? "Grants delegateId owner-level modification rights on this project. Only the"
+      "real owner may issue a delegation — delegates cannot hand their authority on"
+      "to a third party."
+    match actor.id == p.ownerId
+        false -> Result.Err("Only the project owner can grant a delegation on project {p.id}")
+        true -> Result.Ok(grantDelegationChecked(p, delegateId))
+
+verify grantDelegation
+    grantDelegation(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []), "u2") => Result.Ok(Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]))
+    grantDelegation(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]), "u2") => Result.Ok(Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]))
+    grantDelegation(User(id = "u9", name = "A", role = Role.Admin), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []), "u2") => Result.Err("Only the project owner can grant a delegation on project p1")
+
+fn revokeDelegationChecked(p: Project, delegateId: String) -> Project
+    ? "Removes all occurrences of delegateId from the delegateIds list."
+    Project.update(p, delegateIds = removeFromList(p.delegateIds, delegateId))
+
+fn revokeDelegation(actor: User, p: Project, delegateId: String) -> Result<Project, String>
+    ? "Revokes an existing delegation. Only the real owner may revoke, so that a"
+      "delegate cannot protect their own authority by refusing to step down."
+    match actor.id == p.ownerId
+        false -> Result.Err("Only the project owner can revoke a delegation on project {p.id}")
+        true -> Result.Ok(revokeDelegationChecked(p, delegateId))
+
+verify revokeDelegation
+    revokeDelegation(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]), "u2") => Result.Ok(Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []))
+    revokeDelegation(User(id = "u1", name = "O", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []), "u2") => Result.Ok(Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = []))
+    revokeDelegation(User(id = "u2", name = "D", role = Role.Member), Project(id = "p1", name = "P", ownerId = "u1", memberIds = ["u1"], delegateIds = ["u2"]), "u2") => Result.Err("Only the project owner can revoke a delegation on project p1")

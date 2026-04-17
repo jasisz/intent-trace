@@ -1,0 +1,101 @@
+module Projects
+    intent =
+        "Project lifecycle: create projects, manage membership, archive/unarchive."
+        "Every mutation routes through permission checks, so callers cannot bypass"
+        "ownership rules. Membership mutations additionally require the project to"
+        "be active; archive/unarchive are the only operations permitted on an"
+        "archived project."
+    depends [Models, Validation]
+    exposes [createProject, addMember, removeMember, archiveProject, unarchiveProject]
+
+fn createProject(id: String, name: String, owner: User) -> Project
+    ? "Creates a new project with the given owner as sole member. Projects start"
+      "un-archived so they are immediately writable by the owner."
+    Project(
+        id = id,
+        name = name,
+        ownerId = owner.id,
+        memberIds = [owner.id],
+        isArchived = false
+    )
+
+verify createProject
+    createProject("p1", "Demo", User(id = "u1", name = "Alice", role = Role.Admin)) => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"], isArchived = false)
+
+fn alreadyMember(p: Project, userId: String) -> Bool
+    ? "True if userId is already a member (helper; same as isMember but inline here)."
+    List.contains(p.memberIds, userId)
+
+fn addMemberChecked(p: Project, memberId: String) -> Project
+    ? "Adds memberId to the project if not already present."
+    match alreadyMember(p, memberId)
+        true -> p
+        false -> Project.update(p, memberIds = List.prepend(memberId, p.memberIds))
+
+fn addMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
+    ? "Adds a user to the project. Requires write access, which rejects archived"
+      "projects: membership changes on an archived project are not allowed."
+    match Validation.canWriteToProject(actor, p)
+        false -> Result.Err(writeRejectionReason(actor, p))
+        true -> Result.Ok(addMemberChecked(p, memberId))
+
+fn removeFromList(ids: List<String>, target: String) -> List<String>
+    ? "Returns the list with all occurrences of target removed."
+    match ids
+        [] -> []
+        [head, ..tail] -> removeFromListRec(head, tail, target)
+
+fn removeFromListRec(head: String, tail: List<String>, target: String) -> List<String>
+    ? "Single-step helper for removeFromList."
+    match head == target
+        true -> removeFromList(tail, target)
+        false -> List.prepend(head, removeFromList(tail, target))
+
+fn removeMemberChecked(p: Project, memberId: String) -> Result<Project, String>
+    ? "Removes memberId unless they are the owner (owner cannot be removed)."
+    match memberId == p.ownerId
+        true -> Result.Err("Cannot remove the project owner")
+        false -> Result.Ok(Project.update(p, memberIds = removeFromList(p.memberIds, memberId)))
+
+fn removeMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
+    ? "Removes a user from the project. Requires write access (rejects archived"
+      "projects); owner is protected from removal."
+    match Validation.canWriteToProject(actor, p)
+        false -> Result.Err(writeRejectionReason(actor, p))
+        true -> removeMemberChecked(p, memberId)
+
+fn writeRejectionReason(actor: User, p: Project) -> String
+    ? "Human-readable reason why a write was rejected: archival takes priority over"
+      "authority so callers see the most specific cause."
+    match Validation.isArchived(p)
+        true -> "Project {p.id} is archived and cannot be modified"
+        false -> "Only the owner or an Admin can modify project {p.id}"
+
+verify writeRejectionReason
+    writeRejectionReason(User(id = "u9", name = "V", role = Role.Viewer), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = false)) => "Only the owner or an Admin can modify project p"
+    writeRejectionReason(User(id = "u1", name = "A", role = Role.Admin), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = true)) => "Project p is archived and cannot be modified"
+
+fn setArchived(p: Project, flag: Bool) -> Project
+    ? "Unchecked: writes the archival flag onto the project."
+    Project.update(p, isArchived = flag)
+
+fn archiveProject(actor: User, p: Project) -> Result<Project, String>
+    ? "Archives the project. Only the owner or an Admin may archive; idempotent on"
+      "already-archived projects."
+    match Validation.canArchive(actor, p)
+        false -> Result.Err("Only the owner or an Admin can archive project {p.id}")
+        true -> Result.Ok(setArchived(p, true))
+
+fn unarchiveProject(actor: User, p: Project) -> Result<Project, String>
+    ? "Un-archives the project, restoring write access. Only owner or Admin."
+    match Validation.canArchive(actor, p)
+        false -> Result.Err("Only the owner or an Admin can unarchive project {p.id}")
+        true -> Result.Ok(setArchived(p, false))
+
+verify archiveProject
+    archiveProject(User(id = "u1", name = "A", role = Role.Admin), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = false)) => Result.Ok(Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = true))
+    archiveProject(User(id = "u9", name = "V", role = Role.Viewer), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = false)) => Result.Err("Only the owner or an Admin can archive project p")
+
+verify unarchiveProject
+    unarchiveProject(User(id = "u1", name = "A", role = Role.Admin), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = true)) => Result.Ok(Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = false))
+    unarchiveProject(User(id = "u9", name = "V", role = Role.Viewer), Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = true)) => Result.Err("Only the owner or an Admin can unarchive project p")

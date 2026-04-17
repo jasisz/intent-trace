@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Run one intent-trace slice end-to-end.
+"""Run intent-trace over a program + one or more prompts, with ablation.
 
 Usage:
+    # Single prompt:
     python scripts/run_one.py programs/order_total prompts/order_total/reject_negative_prices.md
+
+    # All prompts in a directory:
+    python scripts/run_one.py programs/order_total prompts/order_total
 """
+from __future__ import annotations
+
 import argparse
 import difflib
 import json
@@ -14,6 +20,8 @@ import time
 from pathlib import Path
 
 from anthropic import Anthropic
+
+from intent_trace.mask import mask
 
 MODEL_A = os.environ.get("INTENT_TRACE_MODEL_A", "claude-sonnet-4-6")
 MODEL_B = os.environ.get("INTENT_TRACE_MODEL_B", "claude-sonnet-4-6")
@@ -33,7 +41,6 @@ def load_program(program_dir: Path, lang: str) -> tuple[str, str]:
 
 def extract_json(text: str) -> dict:
     text = text.strip()
-    # Strip markdown code fences if present.
     m = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
     if m:
         text = m.group(1)
@@ -61,10 +68,9 @@ def llm_a_modify(lang: str, filename: str, source: str, prompt: str) -> str:
         "Return the complete modified file content."
     )
     out = call(MODEL_A, system, user, max_tokens=8192).strip()
-    # Defensively strip code fences if the model added them.
     if out.startswith("```"):
         lines = out.splitlines()
-        if lines[-1].startswith("```"):
+        if lines and lines[-1].startswith("```"):
             lines = lines[1:-1]
         else:
             lines = lines[1:]
@@ -72,13 +78,13 @@ def llm_a_modify(lang: str, filename: str, source: str, prompt: str) -> str:
     return out
 
 
-def make_diff(before: str, after: str, filename: str) -> str:
+def make_diff(before: str, after: str, filename: str, context_label: str) -> str:
     return "\n".join(
         difflib.unified_diff(
             before.splitlines(),
             after.splitlines(),
-            fromfile=f"a/{filename}",
-            tofile=f"b/{filename}",
+            fromfile=f"a/{context_label}/{filename}",
+            tofile=f"b/{context_label}/{filename}",
             lineterm="",
         )
     )
@@ -88,7 +94,7 @@ def llm_b_guess(lang: str, filename: str, diff: str) -> dict:
     system = (
         "You are reviewing a code change. You see only the diff. "
         "Guess what the author was trying to achieve. "
-        "Focus on the PRIMARY intent. Skip secondary refactoring notes. "
+        "Focus on the PRIMARY intent. Skip secondary refactoring. "
         "Be concrete, not vague."
     )
     user = (
@@ -123,30 +129,45 @@ def judge(original_prompt: str, guess_intent: str) -> dict:
     return extract_json(call(MODEL_JUDGE, system, user))
 
 
-def run_slice(lang: str, program_dir: Path, prompt: str) -> dict:
-    filename, source = load_program(program_dir, lang)
-    print(f"  [{lang}] LLM-A applying change request...")
-    modified = llm_a_modify(lang, filename, source, prompt)
-    diff = make_diff(source, modified, filename)
-    print(f"  [{lang}] LLM-B guessing intent from diff...")
-    guess = llm_b_guess(lang, filename, diff)
-    print(f"  [{lang}] Judge scoring guess vs original...")
-    score = judge(prompt, guess["intent"])
-    return {
-        "lang": lang,
-        "filename": filename,
-        "source_before": source,
-        "source_after": modified,
-        "diff": diff,
-        "guess": guess,
-        "judgment": score,
-    }
+def run_prompt(program_dir: Path, prompt_path: Path) -> list[dict]:
+    prompt = prompt_path.read_text()
+    prompt_name = prompt_path.stem
+    results: list[dict] = []
+
+    for lang in ["aver", "python"]:
+        print(f"  [{lang}] LLM-A applying '{prompt_name}'...")
+        filename, source = load_program(program_dir, lang)
+        modified = llm_a_modify(lang, filename, source, prompt)
+
+        for ablation in ["full", "masked"]:
+            if ablation == "full":
+                before, after = source, modified
+            else:
+                before, after = mask(lang, source), mask(lang, modified)
+
+            diff = make_diff(before, after, filename, ablation)
+            print(f"    [{lang}/{ablation}] LLM-B guessing...")
+            guess = llm_b_guess(lang, filename, diff)
+            print(f"    [{lang}/{ablation}] judge scoring...")
+            judgment = judge(prompt, guess["intent"])
+            results.append(
+                {
+                    "prompt": prompt_name,
+                    "lang": lang,
+                    "ablation": ablation,
+                    "filename": filename,
+                    "diff": diff,
+                    "guess": guess,
+                    "judgment": judgment,
+                }
+            )
+    return results
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("program_dir", help="e.g. programs/order_total")
-    ap.add_argument("prompt_file", help="e.g. prompts/order_total/reject_negative_prices.md")
+    ap.add_argument("prompts", help="prompt file or directory")
     args = ap.parse_args()
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -154,47 +175,67 @@ def main() -> int:
         return 1
 
     program_dir = Path(args.program_dir)
-    prompt = Path(args.prompt_file).read_text()
+    prompts_arg = Path(args.prompts)
 
-    print(f"Program:   {program_dir}")
-    print(f"Prompt:    {args.prompt_file}")
-    print(f"Model A:   {MODEL_A}")
-    print(f"Model B:   {MODEL_B}")
-    print(f"Judge:     {MODEL_JUDGE}")
+    if prompts_arg.is_dir():
+        prompt_files = sorted(prompts_arg.glob("*.md"))
+    else:
+        prompt_files = [prompts_arg]
+
+    if not prompt_files:
+        print("no prompt files found", file=sys.stderr)
+        return 1
+
+    print(f"Program:  {program_dir.name}")
+    print(f"Prompts:  {len(prompt_files)}")
+    print(f"Model A:  {MODEL_A}")
+    print(f"Model B:  {MODEL_B}")
+    print(f"Judge:    {MODEL_JUDGE}")
     print()
 
-    results = {}
-    for lang in ["aver", "python"]:
-        print(f"[{lang}]")
-        results[lang] = run_slice(lang, program_dir, prompt)
+    all_results: list[dict] = []
+    for pf in prompt_files:
+        print(f"[{pf.stem}]")
+        all_results.extend(run_prompt(program_dir, pf))
         print()
 
     ts = time.strftime("%Y%m%d_%H%M%S")
-    prompt_name = Path(args.prompt_file).stem
-    out = Path("results") / f"{program_dir.name}__{prompt_name}__{ts}.json"
+    scope = "all" if prompts_arg.is_dir() else prompts_arg.stem
+    out = Path("results") / f"{program_dir.name}__{scope}__{ts}.json"
     out.parent.mkdir(exist_ok=True)
     out.write_text(
         json.dumps(
             {
-                "prompt": prompt,
                 "program": program_dir.name,
                 "models": {"a": MODEL_A, "b": MODEL_B, "judge": MODEL_JUDGE},
-                "runs": results,
+                "results": all_results,
             },
             indent=2,
         )
     )
 
+    # Summary table
     print("---")
-    print(f"Saved:  {out}")
-    print()
-    print(f"Aver   score: {results['aver']['judgment']['score']}/3")
-    print(f"  guess:    {results['aver']['guess']['intent']}")
-    print(f"  judge:    {results['aver']['judgment']['reasoning']}")
-    print()
-    print(f"Python score: {results['python']['judgment']['score']}/3")
-    print(f"  guess:    {results['python']['guess']['intent']}")
-    print(f"  judge:    {results['python']['judgment']['reasoning']}")
+    print(f"Saved: {out}\n")
+    rows: dict[tuple[str, str, str], int] = {}
+    for r in all_results:
+        key = (r["prompt"], r["lang"], r["ablation"])
+        rows[key] = r["judgment"]["score"]
+
+    prompts_seen = sorted({r["prompt"] for r in all_results})
+    header = f"{'prompt':<30} {'lang':<8} {'full':>6} {'masked':>8}  Δ"
+    print(header)
+    print("-" * len(header))
+    for pn in prompts_seen:
+        for lang in ["aver", "python"]:
+            full = rows.get((pn, lang, "full"), "-")
+            masked = rows.get((pn, lang, "masked"), "-")
+            try:
+                delta = full - masked  # type: ignore[operator]
+                delta_s = f"{delta:+d}"
+            except TypeError:
+                delta_s = "-"
+            print(f"{pn:<30} {lang:<8} {full!s:>6} {masked!s:>8}  {delta_s}")
     return 0
 
 

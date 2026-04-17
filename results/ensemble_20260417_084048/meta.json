@@ -1,0 +1,22 @@
+{
+  "started": "2026-04-17T08:43:47",
+  "models": {
+    "b": "claude-sonnet-4-6",
+    "judges": {
+      "opus": "claude-opus-4-7",
+      "sonnet": "claude-sonnet-4-6",
+      "haiku": "claude-haiku-4-5-20251001"
+    }
+  },
+  "plan": [
+    {
+      "program": "taskmanager",
+      "prompts": [
+        "add_priority",
+        "delegate_permissions",
+        "project_archival",
+        "task_dependencies"
+      ]
+    }
+  ]
+}

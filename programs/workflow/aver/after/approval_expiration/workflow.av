@@ -1,0 +1,313 @@
+module Workflow
+    intent =
+        "Expense-report approval workflow. Each report moves through Draft → Submitted →"
+        "Approved or Rejected, and Approved reports can finally be Paid. Transitions are"
+        "guarded: submitting requires non-empty title and positive amount; approval is"
+        "gated by the approver's authority limit; payment requires a prior approval."
+        "Approvals carry the timestamp at which they were granted; an approval that is"
+        "not paid within a configured maximum age becomes stale, and `expireStale` moves"
+        "the report back to Submitted so it can go through approval again. `payReport`"
+        "refuses to pay a report whose approval has gone stale."
+        "Every transition is recorded in an audit trail attached to the report."
+
+decision StatesAsClosedVariant
+    date = "2026-04-16"
+    reason =
+        "Expense reports have a small, fixed set of lifecycle states. Closing the variant"
+        "lets the type-checker flag any future code path that forgets to handle one."
+        "String-typed status fields would silently accept typos and new values."
+    chosen = "SumTypeStatus"
+    rejected = ["StringStatus", "IntCodeStatus"]
+    impacts = [statusOf, submitReport, approveReport, rejectReport, payReport, isTerminal, expireStale]
+
+decision AuditTrailInline
+    date = "2026-04-16"
+    reason =
+        "Callers routinely need to show who did what when. Storing events on the report"
+        "keeps replay and explanation queries cheap. A separate audit store would force"
+        "every consumer to join two sources."
+    chosen = "InlineAuditLog"
+    rejected = ["ExternalAuditStore", "NoAuditLog"]
+    impacts = [submitReport, approveReport, rejectReport, payReport, eventsOf, expireStale]
+
+decision ApprovalExpirationOnReport
+    date = "2026-04-16"
+    reason =
+        "Approvals that sit unpaid indefinitely accumulate stale authorization. Storing"
+        "the approval timestamp directly on the report (rather than deriving it from the"
+        "audit log) keeps staleness checks O(1) and avoids coupling payment policy to"
+        "audit-log parsing. `Option.None` represents 'never approved or re-submitted'."
+    chosen = "InlineApprovalTimestamp"
+    rejected = ["ScanAuditLog", "SeparateApprovalStore"]
+    impacts = [approveReport, payReport, expireStale, isApprovalStale, approvalAgeMs]
+
+record Money
+    cents: Int
+
+record User
+    id: String
+    name: String
+    approvalLimitCents: Int
+
+type Status
+    Draft
+    Submitted
+    Approved
+    Rejected
+    Paid
+
+record Event
+    timestampMs: Int
+    actorId: String
+    note: String
+
+record Report
+    id: String
+    title: String
+    amount: Money
+    submitterId: String
+    status: Status
+    approvedAtMs: Option<Int>
+    events: List<Event>
+
+fn emptyReport(id: String, submitterId: String) -> Report
+    ? "Creates a fresh Draft report with no title, zero amount, no approval, and no events."
+    Report(
+        id = id,
+        title = "",
+        amount = Money(cents = 0),
+        submitterId = submitterId,
+        status = Status.Draft,
+        approvedAtMs = Option.None,
+        events = []
+    )
+
+fn statusOf(r: Report) -> Status
+    ? "Returns the current status of the report."
+    r.status
+
+verify statusOf
+    statusOf(emptyReport("R1", "U1")) => Status.Draft
+
+fn eventsOf(r: Report) -> List<Event>
+    ? "Returns the audit trail events in chronological order (oldest first)."
+    List.reverse(r.events)
+
+fn recordEvent(r: Report, e: Event) -> Report
+    ? "Prepends an event to the internal events list (so newest is at head)."
+    Report.update(r, events = List.prepend(e, r.events))
+
+fn withTitleAndAmount(r: Report, title: String, amount: Money) -> Report
+    ? "Updates title and amount on a report. Intended for Draft reports only."
+    Report.update(r, title = title, amount = amount)
+
+fn amountIsPositive(m: Money) -> Bool
+    ? "True if the money amount is strictly positive."
+    m.cents > 0
+
+verify amountIsPositive
+    amountIsPositive(Money(cents = 100)) => true
+    amountIsPositive(Money(cents = 0)) => false
+    amountIsPositive(Money(cents = -1)) => false
+
+fn titleIsPresent(r: Report) -> Bool
+    ? "True if the report title is non-empty."
+    String.len(r.title) > 0
+
+verify titleIsPresent
+    titleIsPresent(emptyReport("R1", "U1")) => false
+
+fn applySubmit(r: Report, actorId: String, timestampMs: Int) -> Report
+    ? "Unchecked: marks the report as Submitted, clears any prior approval timestamp, and logs the event."
+    withStatus = Report.update(r, status = Status.Submitted, approvedAtMs = Option.None)
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "submitted"))
+
+fn submitValidated(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
+    ? "Submit path taken when the report is already known to be Draft. Checks invariants."
+    match titleIsPresent(r)
+        false -> Result.Err("Report title must not be empty")
+        true -> submitValidatedAmount(r, actorId, timestampMs)
+
+fn submitValidatedAmount(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
+    ? "Amount check after title check."
+    match amountIsPositive(r.amount)
+        false -> Result.Err("Report amount must be positive")
+        true -> Result.Ok(applySubmit(r, actorId, timestampMs))
+
+fn submitReport(r: Report, actorId: String, timestampMs: Int) -> Result<Report, String>
+    ? "Moves a Draft report to Submitted. Fails if status is not Draft or invariants violated."
+    match r.status
+        Status.Draft -> submitValidated(r, actorId, timestampMs)
+        Status.Submitted -> Result.Err("Report already submitted")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report was rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+verify submitReport
+    submitReport(emptyReport("R1", "U1"), "U1", 1000) => Result.Err("Report title must not be empty")
+
+fn approverHasAuthority(approver: User, amount: Money) -> Bool
+    ? "True if the approver's limit covers the report amount."
+    approver.approvalLimitCents >= amount.cents
+
+verify approverHasAuthority
+    approverHasAuthority(User(id = "M", name = "M", approvalLimitCents = 10000), Money(cents = 5000)) => true
+    approverHasAuthority(User(id = "M", name = "M", approvalLimitCents = 100), Money(cents = 5000)) => false
+
+fn applyApprove(r: Report, approver: User, timestampMs: Int) -> Report
+    ? "Unchecked: marks the report as Approved, stamps the approval time, and records who approved."
+    withStatus = Report.update(r, status = Status.Approved, approvedAtMs = Option.Some(timestampMs))
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = approver.id, note = "approved"))
+
+fn approveIfAuthorized(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
+    ? "Approves the report only if the approver's limit covers the amount."
+    match approverHasAuthority(approver, r.amount)
+        false -> Result.Err("Approver {approver.id} limit too low for amount")
+        true -> Result.Ok(applyApprove(r, approver, timestampMs))
+
+fn approveReport(r: Report, approver: User, timestampMs: Int) -> Result<Report, String>
+    ? "Moves a Submitted report to Approved. Approver must have sufficient authority."
+    match r.status
+        Status.Submitted -> approveIfAuthorized(r, approver, timestampMs)
+        Status.Draft -> Result.Err("Cannot approve a Draft report")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report was rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+fn applyReject(r: Report, actorId: String, reason: String, timestampMs: Int) -> Report
+    ? "Unchecked: marks the report as Rejected and records the reason in the event log."
+    withStatus = Report.update(r, status = Status.Rejected)
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "rejected: {reason}"))
+
+fn rejectReport(r: Report, actorId: String, reason: String, timestampMs: Int) -> Result<Report, String>
+    ? "Moves a Submitted report to Rejected with a reason."
+    match r.status
+        Status.Submitted -> Result.Ok(applyReject(r, actorId, reason, timestampMs))
+        Status.Draft -> Result.Err("Cannot reject a Draft report")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report already rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+fn approvedAtMsOf(r: Report) -> Option<Int>
+    ? "Returns the recorded approval timestamp, if any."
+    r.approvedAtMs
+
+fn approvalAgeMs(r: Report, nowMs: Int) -> Option<Int>
+    ? "Age of the current approval in milliseconds, or Option.None if there is no recorded approval."
+    match r.approvedAtMs
+        Option.None -> Option.None
+        Option.Some(t) -> Option.Some(nowMs - t)
+
+verify approvalAgeMs
+    approvalAgeMs(emptyReport("R1", "U1"), 5000) => Option.None
+    approvalAgeMs(stampedApproved(1000), 5000) => Option.Some(4000)
+
+fn stampedApproved(approvedAtMs: Int) -> Report
+    ? "Test fixture: a small Approved report with the given approval timestamp."
+    Report(
+        id = "R",
+        title = "t",
+        amount = Money(cents = 1),
+        submitterId = "U",
+        status = Status.Approved,
+        approvedAtMs = Option.Some(approvedAtMs),
+        events = []
+    )
+
+fn isApprovalStale(r: Report, nowMs: Int, maxAgeMs: Int) -> Bool
+    ? "True when the report has a recorded approval whose age strictly exceeds maxAgeMs."
+      "A report without an approval timestamp is never considered stale by this predicate."
+    match r.approvedAtMs
+        Option.None -> false
+        Option.Some(t) -> (nowMs - t) > maxAgeMs
+
+verify isApprovalStale
+    isApprovalStale(emptyReport("R1", "U1"), 100000, 1000) => false
+    isApprovalStale(stampedApproved(1000), 2000, 500) => true
+    isApprovalStale(stampedApproved(1000), 2000, 5000) => false
+    isApprovalStale(stampedApproved(1000), 1500, 500) => false
+
+fn applyExpire(r: Report, actorId: String, nowMs: Int) -> Report
+    ? "Unchecked: moves an Approved report back to Submitted, clears the approval timestamp, and logs the expiration."
+    withStatus = Report.update(r, status = Status.Submitted, approvedAtMs = Option.None)
+    recordEvent(withStatus, Event(timestampMs = nowMs, actorId = actorId, note = "approval expired"))
+
+fn expireIfStale(r: Report, actorId: String, nowMs: Int, maxAgeMs: Int) -> Report
+    ? "Approved branch of expireStale: expires only if the current approval is older than maxAgeMs."
+    match isApprovalStale(r, nowMs, maxAgeMs)
+        true -> applyExpire(r, actorId, nowMs)
+        false -> r
+
+fn expireStale(r: Report, actorId: String, nowMs: Int, maxAgeMs: Int) -> Report
+    ? "If the report is Approved and its approval is older than maxAgeMs, move it back to Submitted."
+      "Other statuses are returned unchanged: a fresh approval, a paid or rejected report, and a"
+      "Draft or Submitted report all have nothing to expire."
+    match r.status
+        Status.Approved -> expireIfStale(r, actorId, nowMs, maxAgeMs)
+        Status.Draft -> r
+        Status.Submitted -> r
+        Status.Rejected -> r
+        Status.Paid -> r
+
+verify expireStale
+    statusOf(expireStale(stampedApproved(1000), "U", 2000, 500)) => Status.Submitted
+    statusOf(expireStale(stampedApproved(1000), "U", 2000, 5000)) => Status.Approved
+    approvedAtMsOf(expireStale(stampedApproved(1000), "U", 2000, 500)) => Option.None
+    approvedAtMsOf(expireStale(stampedApproved(1000), "U", 2000, 5000)) => Option.Some(1000)
+    statusOf(expireStale(emptyReport("R1", "U1"), "U1", 99999, 1)) => Status.Draft
+
+fn applyPay(r: Report, actorId: String, timestampMs: Int) -> Report
+    ? "Unchecked: marks the report as Paid and records the payment event."
+    withStatus = Report.update(r, status = Status.Paid)
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "paid"))
+
+fn payIfFresh(r: Report, actorId: String, nowMs: Int, maxAgeMs: Int) -> Result<Report, String>
+    ? "Approved branch of payReport: refuse payment when the approval has gone stale."
+    match isApprovalStale(r, nowMs, maxAgeMs)
+        true -> Result.Err("Approval has expired; report must be re-approved before payment")
+        false -> Result.Ok(applyPay(r, actorId, nowMs))
+
+fn payReport(r: Report, actorId: String, nowMs: Int, maxAgeMs: Int) -> Result<Report, String>
+    ? "Moves an Approved report to Paid. Fails if the approval is older than maxAgeMs."
+      "nowMs is the current wall-clock time in milliseconds; maxAgeMs is the maximum"
+      "permitted age of an approval at the moment of payment."
+    match r.status
+        Status.Approved -> payIfFresh(r, actorId, nowMs, maxAgeMs)
+        Status.Draft -> Result.Err("Cannot pay a Draft report")
+        Status.Submitted -> Result.Err("Report must be approved before payment")
+        Status.Rejected -> Result.Err("Cannot pay a rejected report")
+        Status.Paid -> Result.Err("Report already paid")
+
+verify payReport
+    payReport(emptyReport("R1", "U1"), "U1", 1000, 60000) => Result.Err("Cannot pay a Draft report")
+    payReport(stampedApproved(1000), "U", 2000, 500) => Result.Err("Approval has expired; report must be re-approved before payment")
+    paidStatusOrDraft(payReport(stampedApproved(1000), "U", 2000, 5000)) => Status.Paid
+
+fn paidStatusOrDraft(res: Result<Report, String>) -> Status
+    ? "Test probe: extracts the status of a paid report, or Draft as a stand-in for the Err branch."
+    match res
+        Result.Ok(p) -> p.status
+        Result.Err(_) -> Status.Draft
+
+fn isTerminal(s: Status) -> Bool
+    ? "True if the state does not permit further transitions."
+    match s
+        Status.Paid -> true
+        Status.Rejected -> true
+        Status.Draft -> false
+        Status.Submitted -> false
+        Status.Approved -> false
+
+verify isTerminal
+    isTerminal(Status.Draft) => false
+    isTerminal(Status.Submitted) => false
+    isTerminal(Status.Approved) => false
+    isTerminal(Status.Rejected) => true
+    isTerminal(Status.Paid) => true
+
+fn main() -> Unit
+    ! [Console.print]
+    r = emptyReport("R1", "U1")
+    r1 = withTitleAndAmount(r, "Travel - Q2", Money(cents = 45000))
+    Console.print("Submit:")
+    Console.print(submitReport(r1, "U1", 1000))

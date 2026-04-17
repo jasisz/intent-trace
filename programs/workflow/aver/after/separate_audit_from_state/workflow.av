@@ -1,0 +1,247 @@
+module Workflow
+    intent =
+        "Expense-report approval workflow. Each report moves through Draft → Submitted →"
+        "Approved or Rejected, and Approved reports can finally be Paid. Transitions are"
+        "guarded: submitting requires non-empty title and positive amount; approval is"
+        "gated by the approver's authority limit; payment requires a prior approval."
+        "Core lifecycle state lives on ReportCore; the audit trail is tracked alongside"
+        "in AuditedReport, so consumers can pick the shape that fits their query."
+
+decision StatesAsClosedVariant
+    date = "2026-04-16"
+    reason =
+        "Expense reports have a small, fixed set of lifecycle states. Closing the variant"
+        "lets the type-checker flag any future code path that forgets to handle one."
+        "String-typed status fields would silently accept typos and new values."
+    chosen = "SumTypeStatus"
+    rejected = ["StringStatus", "IntCodeStatus"]
+    impacts = [statusOf, submitReport, approveReport, rejectReport, payReport, isTerminal]
+
+decision AuditTrailAlongsideCore
+    date = "2026-04-16"
+    reason =
+        "The previous shape mixed current lifecycle fields with the full event history on"
+        "one Report record. Pure business-logic queries ended up carrying the audit"
+        "payload, and the type gave no signal about which concern each caller touched."
+        "Splitting yields ReportCore for state-only queries and AuditedReport for the"
+        "combined view. Transition semantics are unchanged; only the location of the"
+        "event list moves. An externalised audit store was rejected because replay and"
+        "explanation still want the events on hand, just not inside the core record."
+    chosen = "CoreAndAuditedReport"
+    rejected = ["InlineAuditLog", "ExternalAuditStore", "NoAuditLog"]
+    impacts = [submitReport, approveReport, rejectReport, payReport, eventsOf, coreOf]
+
+record Money
+    cents: Int
+
+record User
+    id: String
+    name: String
+    approvalLimitCents: Int
+
+type Status
+    Draft
+    Submitted
+    Approved
+    Rejected
+    Paid
+
+record Event
+    timestampMs: Int
+    actorId: String
+    note: String
+
+record ReportCore
+    id: String
+    title: String
+    amount: Money
+    submitterId: String
+    status: Status
+
+record AuditedReport
+    core: ReportCore
+    events: List<Event>
+
+fn emptyCore(id: String, submitterId: String) -> ReportCore
+    ? "Creates a fresh Draft core with no title and zero amount."
+    ReportCore(
+        id = id,
+        title = "",
+        amount = Money(cents = 0),
+        submitterId = submitterId,
+        status = Status.Draft
+    )
+
+fn emptyReport(id: String, submitterId: String) -> AuditedReport
+    ? "Creates a fresh Draft report with an empty audit trail."
+    AuditedReport(core = emptyCore(id, submitterId), events = [])
+
+fn coreOf(r: AuditedReport) -> ReportCore
+    ? "Returns the pure lifecycle state of a report, without the audit trail."
+    r.core
+
+fn statusOfCore(c: ReportCore) -> Status
+    ? "Returns the current status of a core report."
+    c.status
+
+fn statusOf(r: AuditedReport) -> Status
+    ? "Returns the current status of an audited report."
+    statusOfCore(r.core)
+
+verify statusOf
+    statusOf(emptyReport("R1", "U1")) => Status.Draft
+
+fn eventsOf(r: AuditedReport) -> List<Event>
+    ? "Returns the audit trail events in chronological order (oldest first)."
+    List.reverse(r.events)
+
+fn recordEvent(r: AuditedReport, e: Event) -> AuditedReport
+    ? "Prepends an event to the internal events list (so newest is at head)."
+    AuditedReport.update(r, events = List.prepend(e, r.events))
+
+fn withCore(r: AuditedReport, c: ReportCore) -> AuditedReport
+    ? "Replaces the core on an audited report, leaving the audit trail untouched."
+    AuditedReport.update(r, core = c)
+
+fn withTitleAndAmountCore(c: ReportCore, title: String, amount: Money) -> ReportCore
+    ? "Updates title and amount on a core report. Intended for Draft cores only."
+    ReportCore.update(c, title = title, amount = amount)
+
+fn withTitleAndAmount(r: AuditedReport, title: String, amount: Money) -> AuditedReport
+    ? "Updates title and amount through the audited view. Audit trail is unchanged."
+    withCore(r, withTitleAndAmountCore(r.core, title, amount))
+
+fn amountIsPositive(m: Money) -> Bool
+    ? "True if the money amount is strictly positive."
+    m.cents > 0
+
+verify amountIsPositive
+    amountIsPositive(Money(cents = 100)) => true
+    amountIsPositive(Money(cents = 0)) => false
+    amountIsPositive(Money(cents = -1)) => false
+
+fn titleIsPresentCore(c: ReportCore) -> Bool
+    ? "True if the core report title is non-empty."
+    String.len(c.title) > 0
+
+verify titleIsPresentCore
+    titleIsPresentCore(emptyCore("R1", "U1")) => false
+
+fn titleIsPresent(r: AuditedReport) -> Bool
+    ? "True if the report title is non-empty."
+    titleIsPresentCore(r.core)
+
+verify titleIsPresent
+    titleIsPresent(emptyReport("R1", "U1")) => false
+
+fn coreWithStatus(c: ReportCore, s: Status) -> ReportCore
+    ? "Returns a copy of the core with its status replaced."
+    ReportCore.update(c, status = s)
+
+fn applySubmit(r: AuditedReport, actorId: String, timestampMs: Int) -> AuditedReport
+    ? "Unchecked: marks the core as Submitted and logs the event on the audit trail."
+    withStatus = withCore(r, coreWithStatus(r.core, Status.Submitted))
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "submitted"))
+
+fn submitValidated(r: AuditedReport, actorId: String, timestampMs: Int) -> Result<AuditedReport, String>
+    ? "Submit path taken when the report is already known to be Draft. Checks invariants."
+    match titleIsPresent(r)
+        false -> Result.Err("Report title must not be empty")
+        true -> submitValidatedAmount(r, actorId, timestampMs)
+
+fn submitValidatedAmount(r: AuditedReport, actorId: String, timestampMs: Int) -> Result<AuditedReport, String>
+    ? "Amount check after title check."
+    match amountIsPositive(r.core.amount)
+        false -> Result.Err("Report amount must be positive")
+        true -> Result.Ok(applySubmit(r, actorId, timestampMs))
+
+fn submitReport(r: AuditedReport, actorId: String, timestampMs: Int) -> Result<AuditedReport, String>
+    ? "Moves a Draft report to Submitted. Fails if status is not Draft or invariants violated."
+    match statusOf(r)
+        Status.Draft -> submitValidated(r, actorId, timestampMs)
+        Status.Submitted -> Result.Err("Report already submitted")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report was rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+verify submitReport
+    submitReport(emptyReport("R1", "U1"), "U1", 1000) => Result.Err("Report title must not be empty")
+
+fn approverHasAuthority(approver: User, amount: Money) -> Bool
+    ? "True if the approver's limit covers the report amount."
+    approver.approvalLimitCents >= amount.cents
+
+verify approverHasAuthority
+    approverHasAuthority(User(id = "M", name = "M", approvalLimitCents = 10000), Money(cents = 5000)) => true
+    approverHasAuthority(User(id = "M", name = "M", approvalLimitCents = 100), Money(cents = 5000)) => false
+
+fn applyApprove(r: AuditedReport, approver: User, timestampMs: Int) -> AuditedReport
+    ? "Unchecked: marks the core as Approved and records who approved."
+    withStatus = withCore(r, coreWithStatus(r.core, Status.Approved))
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = approver.id, note = "approved"))
+
+fn approveIfAuthorized(r: AuditedReport, approver: User, timestampMs: Int) -> Result<AuditedReport, String>
+    ? "Approves the report only if the approver's limit covers the amount."
+    match approverHasAuthority(approver, r.core.amount)
+        false -> Result.Err("Approver {approver.id} limit too low for amount")
+        true -> Result.Ok(applyApprove(r, approver, timestampMs))
+
+fn approveReport(r: AuditedReport, approver: User, timestampMs: Int) -> Result<AuditedReport, String>
+    ? "Moves a Submitted report to Approved. Approver must have sufficient authority."
+    match statusOf(r)
+        Status.Submitted -> approveIfAuthorized(r, approver, timestampMs)
+        Status.Draft -> Result.Err("Cannot approve a Draft report")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report was rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+fn applyReject(r: AuditedReport, actorId: String, reason: String, timestampMs: Int) -> AuditedReport
+    ? "Unchecked: marks the core as Rejected and records the reason in the audit trail."
+    withStatus = withCore(r, coreWithStatus(r.core, Status.Rejected))
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "rejected: {reason}"))
+
+fn rejectReport(r: AuditedReport, actorId: String, reason: String, timestampMs: Int) -> Result<AuditedReport, String>
+    ? "Moves a Submitted report to Rejected with a reason."
+    match statusOf(r)
+        Status.Submitted -> Result.Ok(applyReject(r, actorId, reason, timestampMs))
+        Status.Draft -> Result.Err("Cannot reject a Draft report")
+        Status.Approved -> Result.Err("Report already approved")
+        Status.Rejected -> Result.Err("Report already rejected")
+        Status.Paid -> Result.Err("Report already paid")
+
+fn applyPay(r: AuditedReport, actorId: String, timestampMs: Int) -> AuditedReport
+    ? "Unchecked: marks the core as Paid and records the payment event."
+    withStatus = withCore(r, coreWithStatus(r.core, Status.Paid))
+    recordEvent(withStatus, Event(timestampMs = timestampMs, actorId = actorId, note = "paid"))
+
+fn payReport(r: AuditedReport, actorId: String, timestampMs: Int) -> Result<AuditedReport, String>
+    ? "Moves an Approved report to Paid."
+    match statusOf(r)
+        Status.Approved -> Result.Ok(applyPay(r, actorId, timestampMs))
+        Status.Draft -> Result.Err("Cannot pay a Draft report")
+        Status.Submitted -> Result.Err("Report must be approved before payment")
+        Status.Rejected -> Result.Err("Cannot pay a rejected report")
+        Status.Paid -> Result.Err("Report already paid")
+
+fn isTerminal(s: Status) -> Bool
+    ? "True if the state does not permit further transitions."
+    match s
+        Status.Paid -> true
+        Status.Rejected -> true
+        Status.Draft -> false
+        Status.Submitted -> false
+        Status.Approved -> false
+
+verify isTerminal
+    isTerminal(Status.Draft) => false
+    isTerminal(Status.Submitted) => false
+    isTerminal(Status.Approved) => false
+    isTerminal(Status.Rejected) => true
+    isTerminal(Status.Paid) => true
+
+fn main() -> Unit
+    ! [Console.print]
+    r = emptyReport("R1", "U1")
+    r1 = withTitleAndAmount(r, "Travel - Q2", Money(cents = 45000))
+    Console.print("Submit:")
+    Console.print(submitReport(r1, "U1", 1000))

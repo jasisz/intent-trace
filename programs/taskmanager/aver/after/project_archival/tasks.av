@@ -1,0 +1,75 @@
+module Tasks
+    intent =
+        "Task lifecycle: creation, assignment, status transitions. Every mutation"
+        "consults Validation for permission and transition rules; Tasks contains no"
+        "policy of its own — only the orchestration of checks and updates. Mutating"
+        "a task goes through canWriteToProject, so archived projects are rejected"
+        "for all task mutations without per-operation archival checks."
+    depends [Models, Validation]
+    exposes [createTask, assignTask, unassignTask, setStatus]
+
+fn createTask(id: String, projectId: String, title: String, creator: User) -> Task
+    ? "Creates a Todo task in the given project, authored by creator."
+      "The task starts unassigned — a subsequent assignTask places it with a member."
+    Task(
+        id = id,
+        projectId = projectId,
+        title = title,
+        status = Status.Todo,
+        assigneeId = Option.None,
+        createdByUserId = creator.id
+    )
+
+verify createTask
+    createTask("t1", "p1", "Write docs", User(id = "u1", name = "A", role = Role.Member)) => Task(id = "t1", projectId = "p1", title = "Write docs", status = Status.Todo, assigneeId = Option.None, createdByUserId = "u1")
+
+fn mutationRejectionReason(project: Project, action: String) -> String
+    ? "Human-readable error for a rejected task mutation. Archival is reported"
+      "separately from authority so callers can distinguish the two causes."
+    match Validation.isArchived(project)
+        true -> "Project {project.id} is archived; cannot {action}"
+        false -> "Actor cannot {action} in project {project.id}"
+
+verify mutationRejectionReason
+    mutationRejectionReason(Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = false), "assign tasks") => "Actor cannot assign tasks in project p"
+    mutationRejectionReason(Project(id = "p", name = "N", ownerId = "u1", memberIds = ["u1"], isArchived = true), "modify tasks") => "Project p is archived; cannot modify tasks"
+
+fn applyAssign(t: Task, assigneeId: String) -> Task
+    ? "Unchecked: sets assigneeId."
+    Task.update(t, assigneeId = Option.Some(assigneeId))
+
+fn assignTask(actor: User, project: Project, task: Task, assignee: User) -> Result<Task, String>
+    ? "Assigns a task to assignee. Actor must have project write access (which"
+      "rejects archived projects) and assignee must be a project member."
+    match Validation.canAssign(actor, project, assignee)
+        false -> Result.Err(mutationRejectionReason(project, "assign tasks"))
+        true -> Result.Ok(applyAssign(task, assignee.id))
+
+fn applyUnassign(t: Task) -> Task
+    ? "Unchecked: clears assigneeId."
+    Task.update(t, assigneeId = Option.None)
+
+fn unassignTask(actor: User, project: Project, task: Task) -> Result<Task, String>
+    ? "Removes the current assignee. Requires project write access; archived"
+      "projects are rejected by canWriteToProject."
+    match Validation.canWriteToProject(actor, project)
+        false -> Result.Err(mutationRejectionReason(project, "modify tasks"))
+        true -> Result.Ok(applyUnassign(task))
+
+fn applySetStatus(t: Task, next: Status) -> Task
+    ? "Unchecked: writes new status onto the task."
+    Task.update(t, status = next)
+
+fn setStatusChecked(t: Task, next: Status) -> Result<Task, String>
+    ? "Checks the transition rule before updating. Fails on forbidden transitions."
+    match Validation.canTransitionTo(t.status, next)
+        false -> Result.Err("Invalid transition")
+        true -> Result.Ok(applySetStatus(t, next))
+
+fn setStatus(actor: User, project: Project, task: Task, next: Status) -> Result<Task, String>
+    ? "Moves a task to a new status. Actor must have project write access (which"
+      "rejects archived projects) and the transition must be allowed by"
+      "Validation.canTransitionTo."
+    match Validation.canWriteToProject(actor, project)
+        false -> Result.Err(mutationRejectionReason(project, "change task status"))
+        true -> setStatusChecked(task, next)

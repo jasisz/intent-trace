@@ -1,0 +1,60 @@
+module Projects
+    intent =
+        "Project lifecycle: create projects, manage membership. Every mutation routes"
+        "through permission checks, so callers cannot bypass ownership rules."
+    depends [Models, Validation]
+    exposes [createProject, addMember, removeMember]
+
+fn createProject(id: String, name: String, owner: User) -> Project
+    ? "Creates a new project with the given owner as sole member."
+      "The owner is automatically included in memberIds so they can do any operation"
+      "that requires membership, without a separate `addMember` call."
+    Project(
+        id = id,
+        name = name,
+        ownerId = owner.id,
+        memberIds = [owner.id]
+    )
+
+verify createProject
+    createProject("p1", "Demo", User(id = "u1", name = "Alice", role = Role.Admin)) => Project(id = "p1", name = "Demo", ownerId = "u1", memberIds = ["u1"])
+
+fn alreadyMember(p: Project, userId: String) -> Bool
+    ? "True if userId is already a member (helper; same as isMember but inline here)."
+    List.contains(p.memberIds, userId)
+
+fn addMemberChecked(p: Project, memberId: String) -> Project
+    ? "Adds memberId to the project if not already present."
+    match alreadyMember(p, memberId)
+        true -> p
+        false -> Project.update(p, memberIds = List.prepend(memberId, p.memberIds))
+
+fn addMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
+    ? "Adds a user to the project. Only owner or Admin may do this."
+    match Validation.canModifyProject(actor, p)
+        false -> Result.Err("Only the owner or an Admin can modify project {p.id}")
+        true -> Result.Ok(addMemberChecked(p, memberId))
+
+fn removeFromList(ids: List<String>, target: String) -> List<String>
+    ? "Returns the list with all occurrences of target removed."
+    match ids
+        [] -> []
+        [head, ..tail] -> removeFromListRec(head, tail, target)
+
+fn removeFromListRec(head: String, tail: List<String>, target: String) -> List<String>
+    ? "Single-step helper for removeFromList."
+    match head == target
+        true -> removeFromList(tail, target)
+        false -> List.prepend(head, removeFromList(tail, target))
+
+fn removeMemberChecked(p: Project, memberId: String) -> Result<Project, String>
+    ? "Removes memberId unless they are the owner (owner cannot be removed)."
+    match memberId == p.ownerId
+        true -> Result.Err("Cannot remove the project owner")
+        false -> Result.Ok(Project.update(p, memberIds = removeFromList(p.memberIds, memberId)))
+
+fn removeMember(actor: User, p: Project, memberId: String) -> Result<Project, String>
+    ? "Removes a user from the project. Only owner or Admin may do this; owner is protected."
+    match Validation.canModifyProject(actor, p)
+        false -> Result.Err("Only the owner or an Admin can modify project {p.id}")
+        true -> removeMemberChecked(p, memberId)

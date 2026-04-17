@@ -1,0 +1,56 @@
+module Models
+    intent =
+        "Core shared types for the task-manager domain: users, projects, tasks."
+        "Admin/Member/Viewer roles govern what operations are permitted. Tasks move"
+        "through Todo → InProgress → Done, with Blocked as an off-path state. Each"
+        "task carries a Priority (Low/Medium/High/Critical) that can tighten who is"
+        "permitted to assign it."
+    exposes [Role, Status, Priority, User, Project, Task]
+
+decision PriorityIsATaskField
+    date = "2026-04-16"
+    reason =
+        "Priority is a property of the work item itself — it influences assignment"
+        "rules and any display of the task — so it belongs on Task rather than on a"
+        "sibling record. Keeping it as a closed sum of four levels makes pattern"
+        "matching exhaustive and assignment-policy code auditable."
+    chosen = "EnumOnTaskRecord"
+    rejected = ["IntegerField", "SeparatePriorityRecord"]
+    impacts = [Task, Priority]
+
+type Role
+    Admin
+    Member
+    Viewer
+
+type Status
+    Todo
+    InProgress
+    Done
+    Blocked
+
+type Priority
+    Low
+    Medium
+    High
+    Critical
+
+record User
+    id: String
+    name: String
+    role: Role
+
+record Project
+    id: String
+    name: String
+    ownerId: String
+    memberIds: List<String>
+
+record Task
+    id: String
+    projectId: String
+    title: String
+    status: Status
+    priority: Priority
+    assigneeId: Option<String>
+    createdByUserId: String
