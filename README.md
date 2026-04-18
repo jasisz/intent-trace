@@ -14,7 +14,7 @@ Concrete example:
 2. Apply a change request (e.g. *"allow submitter to withdraw their submitted report"*) using a Claude Code agent. Result: `workflow.av` with new `withdraw_report` function and supporting types.
 3. Compute the unified diff (before → after). Hand only that diff to a **reviewer LLM** with the question: *"what was the author trying to achieve?"*
 4. Reviewer outputs a one-sentence guess (e.g. *"add withdrawal action with submitter-only permission and audit-trail preservation"*).
-5. **Five judge models** (Opus, Sonnet, Haiku, gpt-4o, gpt-4.1) score that guess on two axes: did it match the original prompt? did it match what actually changed in the diff?
+5. **Five judge models** (Claude Opus 4.7 + Sonnet 4.6 + Haiku 4.5 + OpenAI gpt-4o + gpt-4.1, cross-vendor ensemble, median) score that guess on two axes (0–10 scale with descriptor anchors): did it match the original prompt? did it match what actually changed in the diff?
 
 ```
 program + prompt → agent refactors → diff → reviewer LLM guesses → 5 judges score
@@ -42,10 +42,6 @@ Headline findings (differences are mostly 0.01–0.20; rubric noise ~0.3 per cel
 **v2 canonical rerun.** All Aver files pass `aver check`; all pfa files carry matching "Design decisions:" sections and complete docstrings. python_oop code was not touched, so only aver + pfa were rerun — python_oop rows are the v1 results carried over unchanged.
 
 **What this benchmark measures.** How well an LLM reviewer reconstructs the intent of a change from a unified diff — nothing about whole-program comprehension, production readability, or human-in-the-loop review.
-
-## Method in one paragraph
-
-For each `(program, prompt, language, view)` cell, an agent applies the change request to a baseline program, we compute the unified diff, hand it to a **reviewer LLM** (Claude Sonnet 4.6) asking it to guess the author's intent, and score the guess along two axes with a **5-model cross-vendor ensemble** (Claude Opus 4.7 + Sonnet 4.6 + Haiku 4.5 + OpenAI gpt-4o + gpt-4.1, median). Every rubric uses a **0–10 scale with descriptor anchors**. Append-only JSONL output, crash-safe, resumable.
 
 ## What we measured
 
