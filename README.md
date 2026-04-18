@@ -6,6 +6,26 @@ This repo tests a claim from the [Aver language](https://averlang.dev) project: 
 
 **What we measure is *intent of the diff*, not *intent of the program*.** The reviewer sees a unified diff between a baseline and a refactored snapshot and has to reconstruct what the author was trying to *change*. This is a different question from "given the full codebase, what does this program do" — Aver may have stronger or weaker properties for whole-program comprehension than this benchmark can show. We deliberately stay in the PR-review frame: reviewer sees the diff, nothing more.
 
+## How it works (in one diagram)
+
+```mermaid
+flowchart LR
+    A["4 baseline programs<br/>(inventory, workflow,<br/>taskmanager, payment_ops)<br/>in 3 languages:<br/>aver / pfa / python_oop"] --> B["18 change requests<br/>(prompts/&lt;program&gt;/*.md)"]
+    B --> C["Refactor applied<br/>by Claude Code agent"]
+    C --> D["Unified diff<br/>(before vs after)"]
+    D --> E["Reviewer LLM<br/>(Sonnet / gpt-4.1 / Gemini)<br/>guesses author's intent<br/>from the diff alone"]
+    E --> F["Intent guess<br/>(one sentence)"]
+    F --> G["Judge ensemble<br/>(5 models cross-vendor:<br/>Opus, Sonnet, Haiku,<br/>gpt-4o, gpt-4.1)"]
+    G --> H["P-axis: does guess<br/>match the prompt?"]
+    G --> I["D-axis: does guess<br/>match what changed<br/>in the diff?"]
+```
+
+Each combination (program × prompt × language × view) is a "slice." Every slice runs through this pipeline. Higher P+D scores = the reviewer reconstructed intent more accurately from the diff. Aver's claim is that its structural prose (`intent` / `decision` / `?` / `verify`) makes diffs more legible to AI reviewers — this benchmark tests that empirically.
+
+**Three language variants** of each program: `aver` (the original), `pfa` (= `python_from_aver`, faithful transliteration of Aver into Python — same intent structure, just Python syntax + docstrings), and `python_oop` (idiomatic OOP Python — what a Python dev would write naturally, no Aver-style intent declarations).
+
+**Two views per slice**: `full` (diff with all prose visible) and `masked` (prose layer stripped — for Aver: `intent`, `decision`, `?`, `verify`; for Python: docstrings + comments). Comparing full vs masked tells us how much each language's prose layer carries.
+
 Headline findings (differences are mostly 0.01–0.20; rubric noise ~0.3 per cell):
 
 1. **Aver ≈ Aver-in-Python on every reader.** `python_from_aver` (shortened to `pfa` throughout) is a faithful transliteration of Aver — same intent structure, Python as carrier. On Sonnet the gap is 0.01, on gpt-4.1 it's 0.10 (pfa leading), on Gemini 0.23 — all within noise. Idiomatic `python_oop` sits 0.16–0.34 below. Interpretation: intent structure carries legibility; Python's training priors give a hair of directional edge when structure is held constant.
