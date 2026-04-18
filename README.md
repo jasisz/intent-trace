@@ -6,25 +6,30 @@ This repo tests a claim from the [Aver language](https://averlang.dev) project: 
 
 **What we measure is *intent of the diff*, not *intent of the program*.** The reviewer sees a unified diff between a baseline and a refactored snapshot and has to reconstruct what the author was trying to *change*. This is a different question from "given the full codebase, what does this program do" — Aver may have stronger or weaker properties for whole-program comprehension than this benchmark can show. We deliberately stay in the PR-review frame: reviewer sees the diff, nothing more.
 
-## How it works (in one diagram)
+## How it works
 
-```mermaid
-flowchart LR
-    A["4 baseline programs<br/>(inventory, workflow,<br/>taskmanager, payment_ops)<br/>in 3 languages:<br/>aver / pfa / python_oop"] --> B["18 change requests<br/>(prompts/&lt;program&gt;/*.md)"]
-    B --> C["Refactor applied<br/>by Claude Code agent"]
-    C --> D["Unified diff<br/>(before vs after)"]
-    D --> E["Reviewer LLM<br/>(Sonnet / gpt-4.1 / Gemini)<br/>guesses author's intent<br/>from the diff alone"]
-    E --> F["Intent guess<br/>(one sentence)"]
-    F --> G["Judge ensemble<br/>(5 models cross-vendor:<br/>Opus, Sonnet, Haiku,<br/>gpt-4o, gpt-4.1)"]
-    G --> H["P-axis: does guess<br/>match the prompt?"]
-    G --> I["D-axis: does guess<br/>match what changed<br/>in the diff?"]
+Concrete example:
+
+1. Take a program — say `workflow.av` (expense-report state machine in Aver).
+2. Apply a change request (e.g. *"allow submitter to withdraw their submitted report"*) using a Claude Code agent. Result: `workflow.av` with new `withdraw_report` function and supporting types.
+3. Compute the unified diff (before → after). Hand only that diff to a **reviewer LLM** with the question: *"what was the author trying to achieve?"*
+4. Reviewer outputs a one-sentence guess (e.g. *"add withdrawal action with submitter-only permission and audit-trail preservation"*).
+5. **Five judge models** (Opus, Sonnet, Haiku, gpt-4o, gpt-4.1) score that guess on two axes: did it match the original prompt? did it match what actually changed in the diff?
+
+```
+program + prompt → agent refactors → diff → reviewer LLM guesses → 5 judges score
 ```
 
-Each combination (program × prompt × language × view) is a "slice." Every slice runs through this pipeline. Higher P+D scores = the reviewer reconstructed intent more accurately from the diff. Aver's claim is that its structural prose (`intent` / `decision` / `?` / `verify`) makes diffs more legible to AI reviewers — this benchmark tests that empirically.
+Repeat for **18 prompts × 4 programs × 3 language variants × 3 reader LLMs × 3 views = 486 slices**, each scored by the 5-judge ensemble. Higher P+D = reviewer reconstructed intent more accurately.
 
-**Three language variants** of each program: `aver` (the original), `pfa` (= `python_from_aver`, faithful transliteration of Aver into Python — same intent structure, just Python syntax + docstrings), and `python_oop` (idiomatic OOP Python — what a Python dev would write naturally, no Aver-style intent declarations).
+**The three language variants** (same program, different surface):
+- `aver` — the original.
+- `pfa` (`python_from_aver`) — Aver translated to Python: same intent structure (frozen dataclasses, `?`-equivalent docstrings, module-level Design decisions), just Python syntax.
+- `python_oop` — idiomatic OOP Python — what a Python dev would write naturally, with no Aver-style intent declarations.
 
-**Two views per slice**: `full` (diff with all prose visible) and `masked` (prose layer stripped — for Aver: `intent`, `decision`, `?`, `verify`; for Python: docstrings + comments). Comparing full vs masked tells us how much each language's prose layer carries.
+**Two views per slice**: `full` (diff with all prose visible) and `masked` (prose stripped — for Aver: `intent`/`decision`/`?`/`verify`; for Python: docstrings + comments). Comparing the two tells us how much each language's prose layer actually carries.
+
+The point: Aver's claim is that structurally declared intent (`intent`/`decision`/`?`/`verify`) makes code legible for AI review without special training. By comparing it to the *same intent structure carried in Python*, we can isolate "intent format wins" from "Python's training priors win."
 
 Headline findings (differences are mostly 0.01–0.20; rubric noise ~0.3 per cell):
 
