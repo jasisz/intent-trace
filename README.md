@@ -43,6 +43,8 @@ Headline findings (differences are mostly 0.01–0.20; rubric noise ~0.3 per cel
 
 **What this benchmark measures.** How well an LLM reviewer reconstructs the intent of a change from a unified diff — nothing about whole-program comprehension, production readability, or human-in-the-loop review.
 
+**What it doesn't measure** (where Aver's value sits separately): compile-time enforcement of intent/verify coverage (`aver check` makes prose mandatory; Python relies on convention which erodes over time), executable spec running (`aver verify` actually runs the examples), sum types + exhaustive `match` for correctness-by-construction, `decision`-block queryability (`aver why` traces rationale), `aver context` for whole-program projection, compilation to Rust/WASM. None of those would surface in a snapshot diff-review test. The benchmark gives Aver an empirical floor on one specific question (LLM diff review); broader claims about Aver's value need other evidence. Also: **scale here is small** (4 programs, 18 prompts, N=18 per cell) — this is a focused study, not a definitive comparison.
+
 ## What we measured
 
 ### Two scoring axes per slice
