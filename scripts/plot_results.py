@@ -256,7 +256,7 @@ def plot_3way_readers(out_path: Path) -> None:
     ax.set_xticks(list(positions))
     ax.set_xticklabels(labels, fontsize=9)
     ax.set_ylabel("Average score (P+D)/2", fontweight="bold")
-    ax.set_title("Intent-trace: reader family dependence across 3 vendors",
+    ax.set_title(f"Intent-trace: reader family dependence across {n_readers} vendors",
                  fontweight="bold", pad=15, color=SLATE)
     ax.set_ylim(7.0, 9.3)
     ax.legend(loc="lower right", frameon=True,

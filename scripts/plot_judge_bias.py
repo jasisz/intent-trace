@@ -117,7 +117,8 @@ def judge_reader_heatmap(out_path: Path) -> None:
 
 def judges_3v5_comparison(out_path: Path) -> None:
     """For each reader, show per-language full-view ranking under 3-judge (Claude-only) vs 5-judge."""
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5.5), sharey=True)
+    n = len(READERS)
+    fig, axes = plt.subplots(1, n, figsize=(4.7 * n, 5.5), sharey=True)
 
     for ax, (reader, path) in zip(axes, READERS.items()):
         rows = [r for r in load_rows(path) if r.get("view") == "full"]
@@ -236,7 +237,7 @@ def judge_family_x_lang(out_path: Path) -> None:
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=9)
-    ax.set_ylabel("Mean score (P+D)/2 across all 3 readers", fontweight="bold")
+    ax.set_ylabel(f"Mean score (P+D)/2 across all {len(READERS)} readers", fontweight="bold")
     ax.set_title("GPT judges are most lenient on Aver (+0.22), similar on both Python variants (+0.07)",
                  fontweight="bold", fontsize=11, pad=12)
     ax.set_ylim(7.2, 9.2)
@@ -250,7 +251,8 @@ def judge_family_x_lang(out_path: Path) -> None:
 
 def ablation_all_readers(out_path: Path) -> None:
     """Full → masked drop per language, grouped per reader."""
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5.5), sharey=True)
+    n = len(READERS)
+    fig, axes = plt.subplots(1, n, figsize=(4.7 * n, 5.5), sharey=True)
 
     for ax, (reader, path) in zip(axes, READERS.items()):
         rows = load_rows(path)
@@ -486,9 +488,10 @@ def program_reader_heatmap(out_path: Path) -> None:
 
 
 def masked_vs_masked_spec(out_path: Path) -> None:
-    """3-reader × 3-lang: masked vs masked_spec, with replication-noise floor
+    """N-reader × 3-lang: masked vs masked_spec, with replication-noise floor
     from Python variants making the Aver delta interpretable."""
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5.5), sharey=True)
+    n = len(READERS)
+    fig, axes = plt.subplots(1, n, figsize=(4.7 * n, 5.5), sharey=True)
 
     for ax, (reader, path) in zip(axes, READERS.items()):
         rows = load_rows(path)
@@ -546,9 +549,10 @@ def masked_vs_masked_spec(out_path: Path) -> None:
 
 
 def ranking_all_readers_ci(out_path: Path) -> None:
-    """Per-reader ranking with 95% bootstrap CI — extends ranking.png to all 3 readers."""
+    """Per-reader ranking with 95% bootstrap CI — one subplot per reader."""
     import random
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5.5), sharey=True)
+    n = len(READERS)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 5.5), sharey=True)
     rng = random.Random(0)
 
     def ci(vals, n=10000):
