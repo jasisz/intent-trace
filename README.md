@@ -2,6 +2,8 @@
 
 **An empirical benchmark for how much change-level author intent survives a code diff — measured with an LLM reviewer.**
 
+> **TL;DR:** 4,860 judgments from a 5-model cross-vendor ensemble (Claude Opus + Sonnet + Haiku + OpenAI gpt-4o + gpt-4.1) across 3 reader LLMs × 3 language variants × 18 refactor prompts × 3 views. **Aver** — a new language with essentially zero LLM training exposure — reads within rubric noise of a Python transliteration carrying the same intent structure on strong readers; loses on a 1300-line multi-module architectural refactor where heavy Python docstrings pull ahead; `verify` blocks (executable spec) carry no legibility signal beyond the narrative prose. Mixed result, honest rigor — v2 canonical rerun, α disclosure, bootstrap CIs, masked ablation.
+
 This repo tests a claim from the [Aver language](https://averlang.dev) project: that **structurally declared intent** (signatures, description markers, decision blocks, verify blocks) makes code legible for AI review without special training on the language.
 
 **What we measure is *intent of the diff*, not *intent of the program*.** The reviewer sees a unified diff between a baseline and a refactored snapshot and has to reconstruct what the author was trying to *change*. This is a different question from "given the full codebase, what does this program do" — Aver may have stronger or weaker properties for whole-program comprehension than this benchmark can show. We deliberately stay in the PR-review frame: reviewer sees the diff, nothing more.
@@ -357,6 +359,21 @@ results/merged/<reader>.jsonl                # canonical per-reader dataset (ded
 ## Status
 
 Dataset is complete (v2 canonical rerun): 3 readers × 162 slices × 5 judges × 2 axes = 4860 judgments. N=18 per `(lang, view)` cell on every reader. python_oop rows are v1 carried over (code was not touched by canonical rewrite — only aver + pfa were rerun). Findings above are stable under ensemble noise (~1 point spread on prompt-axis, 0–1 on diff-axis). PRs welcome to add languages, models, or programs.
+
+## Citation
+
+If you use this benchmark or its data:
+
+```bibtex
+@software{intenttrace2026,
+  author = {Teżewski, Szymon},
+  title  = {intent-trace: an empirical benchmark for LLM diff-review across language variants},
+  year   = {2026},
+  url    = {https://github.com/jasisz/intent-trace}
+}
+```
+
+GitHub renders `CITATION.cff` as a citation widget on the repo page.
 
 ## License
 

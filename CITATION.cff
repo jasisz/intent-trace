@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: "intent-trace: an empirical benchmark for LLM diff-review across language variants"
+message: "If you use this benchmark or its data, please cite it as below."
+type: software
+version: "2.0"
+date-released: "2026-04-19"
+authors:
+  - given-names: Szymon
+    family-names: Teżewski
+repository-code: "https://github.com/jasisz/intent-trace"
+url: "https://averlang.dev"
+license: MIT
+keywords:
+  - benchmark
+  - llm
+  - code-review
+  - diff-review
+  - aver
+  - intent-reconstruction
+  - cross-vendor-judge-ensemble
