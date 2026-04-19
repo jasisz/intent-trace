@@ -219,10 +219,10 @@ READER_PATHS = {
     "Kimi K2": "results/merged/kimi.jsonl",
 }
 READER_COLORS = {
-    "Sonnet": AMBER,
-    "gpt-4.1": SLATE,
-    "Gemini Flash": AMBER_LIGHT,
-    "Kimi K2": AMBER_DARK,
+    "Sonnet": AMBER,         # Anthropic — brand amber
+    "gpt-4.1": SLATE,        # OpenAI — slate
+    "Gemini Flash": "#3b82f6",  # Google — blue
+    "Kimi K2": "#9333ea",    # Moonshot — purple
 }
 
 
@@ -240,8 +240,8 @@ def plot_3way_readers(out_path: Path) -> None:
     labels = [f"{lang}\n{view}" for lang, view in cells]
 
     n_readers = len(readers_data)
-    bar_w = 0.25
-    fig, ax = plt.subplots(figsize=(13, 6.5))
+    bar_w = 0.18
+    fig, ax = plt.subplots(figsize=(15, 6.5))
     positions = range(len(cells))
     for i, (reader, d) in enumerate(readers_data.items()):
         values = [d[k]["avg"] if k in d else 0 for k in cells]
