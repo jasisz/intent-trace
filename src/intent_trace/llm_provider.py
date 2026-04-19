@@ -1,8 +1,10 @@
-"""Unified LLM provider interface: Anthropic + OpenAI.
+"""Unified LLM provider interface: Anthropic + OpenAI + Google + Moonshot.
 
 Model ID dispatch:
-  - claude-*         → Anthropic
-  - gpt-*, o1-*, o3-*, o4-*, chatgpt-* → OpenAI
+  - claude-*                           → Anthropic
+  - gpt-*, chatgpt-*, o1-*, o3-*, o4-* → OpenAI
+  - gemini-*, text-bison, chat-bison   → Google
+  - kimi-*, moonshot-*                 → Moonshot (OpenAI-compatible API)
 """
 from __future__ import annotations
 
@@ -15,6 +17,10 @@ def is_openai_model(model: str) -> bool:
 
 def is_google_model(model: str) -> bool:
     return model.startswith(("gemini-", "text-bison", "chat-bison"))
+
+
+def is_moonshot_model(model: str) -> bool:
+    return model.startswith(("kimi-", "moonshot-"))
 
 
 @lru_cache(maxsize=1)
@@ -34,6 +40,14 @@ def _google_client():
     import os
     from google import genai
     return genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+
+
+@lru_cache(maxsize=1)
+def _moonshot_client():
+    import os
+    from openai import OpenAI
+    return OpenAI(api_key=os.environ["MOONSHOT_API_KEY"],
+                  base_url="https://api.moonshot.ai/v1")
 
 
 def call_llm(model: str, system: str, user: str, max_tokens: int = 512) -> str:
@@ -56,6 +70,16 @@ def call_llm(model: str, system: str, user: str, max_tokens: int = 512) -> str:
         r = _openai_client().chat.completions.create(
             model=model,
             max_completion_tokens=max_tokens,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return r.choices[0].message.content or ""
+    if is_moonshot_model(model):
+        r = _moonshot_client().chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

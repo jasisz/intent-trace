@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-run sanity check: every scored row has all 5 judges on both axes.
+"""Post-run sanity check: every scored row has all 6 judges on both axes.
 
 Exits non-zero (and prints per-row details) if any row is missing a judge
 or has a failed (-1) score. Use this after any rerun_all / fill_* to
@@ -14,7 +14,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-JUDGES = ("opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1")
+JUDGES = ("opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1", "kimi")
 VIEWS = ("full", "masked", "masked_spec", "no_verify")
 MERGED = Path("results/merged")
 
@@ -55,7 +55,7 @@ def main() -> int:
     if any_bad:
         print("\nFAIL: some rows have missing judges. Run fill_missing_judges.py")
         return 1
-    print("\nOK: all rows have all 5 judges on both axes")
+    print("\nOK: all rows have all 6 judges on both axes")
     return 0
 
 

@@ -30,6 +30,7 @@ JUDGES = {
     "haiku":   "claude-haiku-4-5-20251001",
     "gpt-4o":  "gpt-4o",
     "gpt-4.1": "gpt-4.1",
+    "kimi":    "kimi-k2-0905-preview",
 }
 VIEWS = ("full", "masked", "masked_spec", "no_verify")
 MERGED = Path("results/merged")

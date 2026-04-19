@@ -32,6 +32,8 @@ READER_MODELS = {
     "sonnet":  "claude-sonnet-4-6",
     "gpt4.1":  "gpt-4.1",
     "gemini":  "gemini-2.5-flash",
+    "kimi":    "kimi-k2-0905-preview",
+    "opus":    "claude-opus-4-7",
 }
 JUDGES = {
     "opus":    "claude-opus-4-7",
@@ -39,6 +41,7 @@ JUDGES = {
     "haiku":   "claude-haiku-4-5-20251001",
     "gpt-4o":  "gpt-4o",
     "gpt-4.1": "gpt-4.1",
+    "kimi":    "kimi-k2-0905-preview",
 }
 VIEWS = ["full", "masked", "masked_spec"]
 LANGS = ("aver", "python_from_aver")  # python_oop unchanged by canonical fix — preserve v1 rows
@@ -175,6 +178,11 @@ def main():
             i += 1
             key = (prog, prompt_name, lang, view)
             key_s = f"{prog}/{prompt_name}/{lang}/{view}"
+            # masked_spec only meaningful for aver (verify ablation).
+            # For pfa/oop it's identical to masked — skip to save API calls.
+            if view == "masked_spec" and lang != "aver":
+                print(f"[{i}/{total}] {key_s}  SKIP (== masked for non-aver)", flush=True)
+                continue
             if key in done_keys:
                 print(f"[{i}/{total}] {key_s}  SKIP (resumed)", flush=True)
                 continue

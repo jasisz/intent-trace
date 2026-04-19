@@ -31,6 +31,7 @@ READERS = {
     "Sonnet": "results/merged/sonnet.jsonl",
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini": "results/merged/gemini.jsonl",
+    "Kimi K2": "results/merged/kimi.jsonl",
 }
 PROGRAMS = ["inventory", "workflow", "taskmanager", "payment_ops"]
 LANGS = ["aver", "python_from_aver", "python_oop"]
@@ -38,11 +39,11 @@ VIEWS = ["full", "masked"]
 
 
 def load(path_dict):
+    from _load import canonical_load
     out = {}
     for name, p in path_dict.items():
-        path = Path(p)
-        rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
-        rows = [r for r in rows if r.get("view") in VIEWS and r.get("judgment_prompt")]
+        rows = canonical_load(Path(p), keep_views=tuple(VIEWS))
+        rows = [r for r in rows if r.get("judgment_prompt")]
         d = defaultdict(list)
         for r in rows:
             d[(r["program"], r["lang"], r["view"])].append(

@@ -40,11 +40,13 @@ READERS = {
     "Sonnet": "results/merged/sonnet.jsonl",
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini": "results/merged/gemini.jsonl",
+    "Kimi K2": "results/merged/kimi.jsonl",
 }
-JUDGES = ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1"]
+JUDGES = ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1", "kimi"]
 JUDGE_FAMILY = {
     "opus": "Claude", "sonnet": "Claude", "haiku": "Claude",
     "gpt-4o": "OpenAI", "gpt-4.1": "OpenAI",
+    "kimi": "Moonshot",
 }
 CLAUDE = ("opus", "sonnet", "haiku")
 GPT = ("gpt-4o", "gpt-4.1")

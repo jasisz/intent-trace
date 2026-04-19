@@ -26,8 +26,9 @@ READERS = {
     "Sonnet":  "results/merged/sonnet.jsonl",
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini":  "results/merged/gemini.jsonl",
+    "Kimi K2": "results/merged/kimi.jsonl",
 }
-JUDGES_PD = ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1"]
+JUDGES_PD = ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1", "kimi"]
 JUDGES_Q  = ["opus", "sonnet", "haiku"]
 AXES_PD = [
     ("judgment_prompt", "P-axis (prompt match)"),

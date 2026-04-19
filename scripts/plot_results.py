@@ -49,19 +49,17 @@ mpl.rcParams.update({
 
 
 def load_latest(results_root: Path) -> list[dict]:
-    """Canonical reader = Sonnet (merged, 5-judge)."""
+    """Canonical reader = Sonnet (merged, 6-judge).
+
+    Uses canonical_load: for pfa/oop, masked_spec rows are aliased to
+    `masked` (same input, independent sample → doubles N).
+    """
+    from _load import canonical_load
     merged = results_root / "merged" / "sonnet.jsonl"
     if not merged.exists():
         raise SystemExit("results/merged/sonnet.jsonl missing — run scripts/merge_judge_runs.py first")
     print(f"source: {merged}")
-    rows: list[dict] = []
-    for line in merged.read_text().splitlines():
-        if not line.strip():
-            continue
-        r = json.loads(line)
-        if r.get("view") in ("full", "masked"):
-            rows.append(r)
-    return rows
+    return canonical_load(merged, keep_views=("full", "masked"))
 
 
 def _bootstrap_ci(per_slice: list[float], n_resamples: int = 10000,
@@ -218,22 +216,24 @@ READER_PATHS = {
     "Sonnet": "results/merged/sonnet.jsonl",
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini Flash": "results/merged/gemini.jsonl",
+    "Kimi K2": "results/merged/kimi.jsonl",
 }
 READER_COLORS = {
     "Sonnet": AMBER,
     "gpt-4.1": SLATE,
     "Gemini Flash": AMBER_LIGHT,
+    "Kimi K2": AMBER_DARK,
 }
 
 
 def plot_3way_readers(out_path: Path) -> None:
+    from _load import canonical_load
     readers_data: dict[str, dict] = {}
     for name, path in READER_PATHS.items():
         p = Path(path)
         if not p.exists():
             continue
-        rows = [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
-        rows = [r for r in rows if r.get("view") in ("full", "masked")]
+        rows = canonical_load(p, keep_views=("full", "masked"))
         readers_data[name] = aggregate(rows)
 
     cells = sorted({k for d in readers_data.values() for k in d})
