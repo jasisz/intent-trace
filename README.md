@@ -6,7 +6,7 @@
 >
 > ⚠️ **No priming, no language context.** Readers receive the raw unified diff only — **no syntax guide, no language description, no system prompt explaining what Aver is, no few-shot examples, no grammar reference**. The reader must reconstruct intent entirely from the artifact itself. Python readers get the same treatment (no special hint that it's Python). This is deliberate: we're testing whether the artifact carries legibility on its own, not whether a primed LLM can parse it.
 >
-> **TL;DR:** Empirical benchmark of how much change-level author intent an LLM reviewer can reconstruct from a unified diff. 6 non-thinking reader LLMs across 5 model sources (Anthropic / OpenAI / Google / Moonshot / Google-OSS Gemma local) × 6 cross-vendor judges × 18 refactor prompts × 4 programs × 3 language variants (Aver, Aver-in-Python, idiomatic Python) × 3 views (full / masked / verify-preserving), plus 4 separate thinking-tier probes (Kimi K2.5, Kimi K2-thinking, Gemini 2.5 Pro, Gemma 4 26b). ~17,000 judgments, 100% judge coverage verified.
+> **TL;DR:** Empirical benchmark of how much change-level author intent an LLM reviewer can reconstruct from a unified diff. 6 non-thinking reader LLMs across 5 model sources (Anthropic / OpenAI / Google / Moonshot / Google-OSS Gemma local) × 6 cross-vendor judges × 18 refactor prompts × 4 programs × 3 language variants (Aver, Aver-in-Python, idiomatic Python) × 3 views (full / masked / verify-preserving), plus 5 separate thinking-tier probes (Kimi K2.5, Kimi K2-thinking, Kimi K2.6, Gemini 2.5 Pro, Gemma 4 26b). ~19,000 judgments, 100% judge coverage verified.
 
 ![ranking — 6 non-thinking readers](results/plots/ranking_all_readers_ci.png)
 
@@ -28,7 +28,7 @@ Concrete example:
 program + prompt → agent refactors → diff → reviewer LLM guesses → 6 judges score
 ```
 
-Repeat for **18 prompts × 4 programs × 3 language variants × 6 non-thinking reader LLMs × 3 views ≈ 918 slices** (plus 504 across 4 thinking-tier probes), each scored by the 6-judge ensemble. Higher P+D = reviewer reconstructed intent more accurately.
+Repeat for **18 prompts × 4 programs × 3 language variants × 6 non-thinking reader LLMs × 3 views ≈ 918 slices** (plus 630 across 5 thinking-tier probes), each scored by the 6-judge ensemble. Higher P+D = reviewer reconstructed intent more accurately.
 
 **The three language variants** (same program, different surface):
 - `aver` — the original.
@@ -165,7 +165,7 @@ Moonshot publishes **`kimi-k2-0905-preview`** (non-thinking) and **`kimi-k2-thin
 
 This methodology transfers: for any benchmark claiming "X improves with thinking," look for a same-snapshot same-weights thinking-flag-flipped pair. If the vendor doesn't publish one, the claim mixes thinking with generation — which the K2.5 and Gemini Pro-vs-Flash comparisons in this repo both do.
 
-**Separately**, we ran **four thinking-tier probes** (Kimi K2.5, Kimi K2-thinking, Gemini 2.5 Pro, Gemma 4 26b), each paired with its closest non-thinking counterpart. Judges stay non-thinking in every probe. See "Thinking-tier probe" section in Results for per-pair tables and Finding #7 for the interpretation. Main ensemble and headline findings stay non-thinking.
+**Separately**, we ran **five thinking-tier probes** (Kimi K2.5, Kimi K2-thinking, Kimi K2.6, Gemini 2.5 Pro, Gemma 4 26b), each paired with its closest non-thinking counterpart. Judges stay non-thinking in every probe. See "Thinking-tier probe" section in Results for per-pair tables and Finding #7 for the interpretation. Main ensemble and headline findings stay non-thinking.
 
 Real-world PR review bots, IDE assistants (Cursor, Claude Code, Copilot), CI checks — all use non-thinking models for latency (sub-second response). Benchmark matches that tier. A full "reasoning-tier benchmark" (all readers in thinking mode) is a separate open direction and estimated at ~$1,500+ in API costs.
 
@@ -296,11 +296,11 @@ The pattern replicates across every reader: `aver/masked` is the lowest-scoring 
 
 Aver's payment_ops loss concentrates on architectural refactors — where both Aver and idiomatic OOP Python struggle (8.19 and 7.61), and only heavy-doc `python_from_aver` survives (8.65). On additive prompts the gap shrinks from 4× noise to inside-noise.
 
-### Thinking-tier probe — four reader pairs
+### Thinking-tier probe — five reader pairs
 
 ![thinking probe](results/plots/thinking_probe.png)
 
-Four thinking readers outside the main non-thinking ensemble, each paired with its closest non-thinking counterpart (same vendor where possible). Judges stay non-thinking (same 6-judge ensemble as main) — what we measure is *reader-side thinking*, with judges held constant. All pairs N=18 matched prompts, 100% 6-judge coverage. See also Finding #7 for the interpretation.
+Five thinking readers outside the main non-thinking ensemble, each paired with its closest non-thinking counterpart (same vendor where possible). Judges stay non-thinking (same 6-judge ensemble as main) — what we measure is *reader-side thinking*, with judges held constant. All pairs N=18 matched prompts, 100% 6-judge coverage. See also Finding #7 for the interpretation.
 
 **Pair 1 — Kimi K2-0905 (non-thinking) → K2.5 (thinking + newer generation)**
 
@@ -360,21 +360,38 @@ Biggest lifts of any pair (+0.17 to +0.85). But Flash → Pro is a whole-tier ju
 
 Large lifts on masked cells (+0.46 to +0.74); aver/full *goes down* (saturation); pfa/masked essentially unchanged. Size (4B → 26B) and thinking are confounded.
 
-**Taking the four probes together:**
+**Pair 5 — Kimi K2-0905 (non-thinking) → Kimi K2.6 (thinking, newest, coding-oriented)**
+
+K2.6 is the freshest Moonshot coding-oriented model, released 2026-04-13. Added same-day as public availability as a currency check. Thinking-default, so same confound profile as K2.5 (newer generation + thinking).
+
+| view | K2 | K2.6 | Δ |
+|---|---:|---:|---:|
+| aver / full | 8.54 | **8.71** | +0.17 |
+| aver / masked | 7.95 | **8.25** | +0.30 |
+| aver / masked_spec | 7.85 | 8.14 | +0.29 |
+| pfa / full | 8.52 | **8.82** | +0.30 |
+| pfa / masked | 8.24 | 8.39 | +0.14 |
+| oop / full | 8.16 | **8.52** | +0.36 |
+| oop / masked | 8.27 | 8.39 | +0.12 |
+
+Deltas virtually identical to K2 → K2.5 (+0.11–0.38 there, +0.12–0.36 here). **K2.6 ≈ K2.5 on diff-intent recovery.** Moonshot's advertised K2.6 improvements (multi-step planning, tool orchestration, agent workflows) do not surface on a single-call diff-to-intent task — they operate on capabilities this benchmark doesn't probe.
+
+**Taking the five probes together:**
 
 - Pure thinking (K2 → K2-thinking) = zero.
-- Thinking + generation (K2.5) = consistent +0.13 to +0.36.
+- Thinking + generation (K2.5 or K2.6) = consistent +0.11 to +0.38.
 - Thinking + tier-up (Gemini Pro) = biggest lifts (+0.17 to +0.85).
 - Thinking + 6.5× size (Gemma 26b) = big lifts on masked only; aver/full saturates.
+- Coding-agent tuning (K2.6 over K2.5) at the same tier = **flat** on this task.
 
-The thinking flag alone doesn't move the needle. What does is **capability tier** (generation, size, whole-tier model family). Finding #7 develops this interpretation.
+The thinking flag alone doesn't move the needle. What does is **capability tier** (generation, size, whole-tier model family). And even "coding-oriented tuning" at the same tier doesn't help on diff understanding — the capability being tuned lives elsewhere. Finding #7 develops this interpretation.
 
 Limits of these probes:
 - **Thinking judges would be a separate experiment.** Here judges stay non-thinking (same 6-judge ensemble as main). A full all-thinking ensemble (thinking readers + thinking judges) is estimated at ~$1,500+ and left as future work.
 - **Only one pair (K2 vs K2-thinking) cleanly isolates the thinking flag.** The others mix thinking with generation, tier, or size.
 - **Outside of K2-thinking, no vendor currently publishes a same-snapshot thinking-flag-flipped pair** for Anthropic, OpenAI o-series, or Google Gemini — so extending this clean comparison to more vendors requires vendor support.
 
-Thinking reader data: `results/merged/{kimi2.5,kimi-thinking,gemini-pro,gemma26b}.jsonl` (4 × 126 slices, 100% 6-judge coverage each).
+Thinking reader data: `results/merged/{kimi2.5,kimi-thinking,kimi2.6,gemini-pro,gemma26b}.jsonl` (5 × 126 slices, 100% 6-judge coverage each).
 
 ### Verify-preserving ablation (`masked_spec` vs `masked`)
 
@@ -396,10 +413,11 @@ Read these as statements about the specific setup described above — 6 reader f
 
 6. **Per-item inter-judge agreement is low and got lower with the 6th judge** (α_ord pooled across 6 readers × 918 items: **P-axis 0.42, D-axis 0.15** with Kimi added; previously 0.54 / 0.28 on the 5-judge panel). Both well below the 0.67 "tentative" threshold. Pairwise Spearman ρ̄ ≈ 0.52 on P. Kimi judge correlates ~0.38–0.41 with the others on P-axis (vs 0.65–0.73 within the Claude family), so adding it diluted the ensemble's internal consistency — in exchange for true cross-vendor diversity (panel now spans Anthropic / OpenAI / Moonshot rather than 3 Anthropic + 2 OpenAI). **Interval α is higher and rises to 0.53 on P-axis / 0.37 on D-axis** — judges rank items consistently even when absolute scores drift. Judges still agree on *ranking* (Spearman stays positive, cell means stable within noise floor), but fine-grained per-slice claims aren't trustworthy. Noteworthy: Gemma reader produces the highest per-reader α_int (P=0.67, D=0.56) — its terser, more declarative guesses are easier for judges to score consistently. Human raters on a stratified subsample remain the single cleanest remaining improvement.
 
-7. **Capability tier closes the Aver/masked gap; pure thinking flag alone does not.** Four thinking-tier probes, only one of which cleanly isolates the thinking flag from generation/size:
+7. **Capability tier closes the Aver/masked gap; pure thinking flag alone does not.** Five thinking-tier probes, only one of which cleanly isolates the thinking flag from generation/size:
 
    - **K2-0905 (non-thinking) → K2-thinking (same snapshot, thinking flag flipped only)** — Moonshot publishes both as serving modes of the same underlying model, a rare opportunity for a pure thinking-flag control. Deltas on all 7 (lang, view) cells, N=18 matched prompts: aver/full **−0.12**, aver/masked **0.00** (exactly), aver/masked_spec **−0.06**, pfa/full **+0.19**, pfa/masked **−0.08**, oop/full **+0.11**, oop/masked **−0.11**. **All inside the 0.11 noise floor. Pure thinking flip ≈ zero on every metric.**
    - **K2-0905 → K2.5 (newer generation, also thinking)** — same matched-prompt comparison: +0.20, +0.29, +0.38, +0.27, +0.11, +0.35, +0.12. **Consistent +0.11–0.38 lift across every cell** — but generation and thinking are confounded.
+   - **K2-0905 → K2.6 (newest generation, thinking, coding-oriented)** — +0.17, +0.30, +0.29, +0.30, +0.14, +0.36, +0.12. Virtually identical profile to K2.5. **K2.6 ≈ K2.5 on diff-intent recovery** — coding-agent tuning doesn't change this task's capability ceiling at the same generation tier.
    - **Gemini 2.5 Flash (non-thinking) → Gemini 2.5 Pro (thinking + tier-up)**, N=18: aver/full +0.52, aver/masked +0.76, pfa/full +0.32, pfa/masked +0.58, oop/full +0.17, oop/masked +0.38. **Biggest lifts of any probe (+0.17 to +0.85)** — but Flash → Pro is a whole-tier jump, not a thinking flag flip.
    - **Gemma 4 e4b (4B non-thinking) → Gemma 26b (6.5× larger + thinking)**, N=18: aver/full **−0.10**, aver/masked **+0.55**, aver/masked_spec +0.46, pfa/full +0.19, pfa/masked **+0.01**, oop/full +0.26, oop/masked **+0.74**. Biggest lifts on masked cells (+0.46 to +0.74); aver/full goes *down* (saturation); pfa/masked lifts essentially zero.
 
@@ -503,7 +521,7 @@ results/merged/<reader>.jsonl                # canonical per-reader dataset (ded
 
 ## Status
 
-Dataset is complete for 6 non-thinking main-ensemble readers + 4 thinking-tier probes (v2 canonical rerun with post-fill validation): **1,422 slices × 6 judges × 2 axes = 17,064 judgments**, **100% judge coverage verified** via `scripts/coverage_check.py` on every reader. Breakdown: sonnet/gpt4.1/gemini/kimi = 162 slices each (pre-skip-fix); opus = 144; gemma + the 4 thinking probes (k2.5, k2-thinking, gemini-pro, gemma26b) = 126 each (skip-fix active). N=18 per `(lang, view)` cell on every reader; effective N=36 for pfa/oop masked on pre-skip-fix readers (pools duplicate runs). python_oop rows for the original 3 readers are v1 carried over (code was not touched by canonical rewrite — only aver + pfa were rerun); Kimi K2, Opus, Gemma, and all thinking probes were rerun for all three languages. Findings above are stable under the directly-measured 0.11 noise floor. PRs welcome to add languages, models, or programs.
+Dataset is complete for 6 non-thinking main-ensemble readers + 5 thinking-tier probes (v2 canonical rerun with post-fill validation): **1,548 slices × 6 judges × 2 axes = 18,576 judgments**, **100% judge coverage verified** via `scripts/coverage_check.py` on every reader. Breakdown: sonnet/gpt4.1/gemini/kimi = 162 slices each (pre-skip-fix); opus = 144; gemma + the 5 thinking probes (k2.5, k2-thinking, k2.6, gemini-pro, gemma26b) = 126 each (skip-fix active). N=18 per `(lang, view)` cell on every reader; effective N=36 for pfa/oop masked on pre-skip-fix readers (pools duplicate runs). python_oop rows for the original 3 readers are v1 carried over (code was not touched by canonical rewrite — only aver + pfa were rerun); Kimi K2, Opus, Gemma, and all thinking probes were rerun for all three languages. K2.6 added 2026-04-20 same day as public API availability. Findings above are stable under the directly-measured 0.11 noise floor. PRs welcome to add languages, models, or programs.
 
 ## Citation
 

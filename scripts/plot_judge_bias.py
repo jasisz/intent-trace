@@ -848,6 +848,8 @@ def thinking_probe(out_path: Path) -> None:
          "Kimi K2.5 (thinking)",    "results/merged/kimi2.5.jsonl"),
         ("Kimi K2 (non-thinking)", "results/merged/kimi.jsonl",
          "Kimi K2-thinking",        "results/merged/kimi-thinking.jsonl"),
+        ("Kimi K2 (non-thinking)", "results/merged/kimi.jsonl",
+         "Kimi K2.6 (thinking, newest)", "results/merged/kimi2.6.jsonl"),
         ("Gemini Flash (non-thinking)", "results/merged/gemini.jsonl",
          "Gemini 2.5 Pro (thinking)",   "results/merged/gemini-pro.jsonl"),
         ("Gemma 4 e4b (non-thinking, 4B)", "results/merged/gemma.jsonl",
