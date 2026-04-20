@@ -37,6 +37,8 @@ READER_MODELS = {
     "kimi2.5":         "kimi-k2.5",
     "kimi-thinking":   "kimi-k2-thinking",
     "gemini-pro":      "gemini-2.5-pro",
+    "gemma":           "gemma4:e4b",
+    "gemma26b":        "gemma4:26b",
 }
 JUDGES = {
     "opus":    "claude-opus-4-7",
@@ -98,11 +100,17 @@ def llm_b(model, lang, diff):
         '{"intent": "one sentence, primary intent", "confidence": "low|medium|high", "unclear": "optional one-line note, or null"}'
         "\n\nIMPORTANT: raw JSON only, no markdown, no preamble."
     )
-    # Thinking models (kimi-k2.5, kimi-k2-thinking, gemini-2.5-pro) consume tokens
-    # for reasoning_content before the visible answer — give them headroom.
+    # Thinking models (kimi-k2.5, kimi-k2-thinking, gemini-2.5-pro, gemma4:26b)
+    # consume tokens for reasoning_content before the visible answer — give them
+    # headroom. 2048 was too tight: gemini-pro and kimi-k2-thinking produced
+    # notably terser JSON than non-thinking counterparts. Bumped to 4096.
+    # Ollama models (including non-thinking gemma4:e4b) occasionally return
+    # truncated JSON at 512 — bump to 2048 for reliability.
     is_thinking = ("thinking" in model or "k2.5" in model
-                   or model.startswith("gemini-2.5-pro"))
-    max_tok = 2048 if is_thinking else 512
+                   or model.startswith("gemini-2.5-pro")
+                   or model == "gemma4:26b")
+    is_ollama = ":" in model
+    max_tok = 4096 if is_thinking else (2048 if is_ollama else 512)
     text = call_llm(model, system, user, max_tokens=max_tok).strip()
     m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if m:

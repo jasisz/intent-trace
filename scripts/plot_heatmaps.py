@@ -33,6 +33,7 @@ READERS = {
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini": "results/merged/gemini.jsonl",
     "Kimi K2": "results/merged/kimi.jsonl",
+    "Gemma 4 e4b": "results/merged/gemma.jsonl",
 }
 PROGRAMS = ["inventory", "workflow", "taskmanager", "payment_ops"]
 LANGS = ["aver", "python_from_aver", "python_oop"]

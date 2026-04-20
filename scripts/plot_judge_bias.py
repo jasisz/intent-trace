@@ -42,6 +42,7 @@ READERS = {
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini": "results/merged/gemini.jsonl",
     "Kimi K2": "results/merged/kimi.jsonl",
+    "Gemma 4 e4b": "results/merged/gemma.jsonl",
 }
 JUDGES = ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1", "kimi"]
 JUDGE_FAMILY = {
@@ -560,10 +561,20 @@ def masked_vs_masked_spec(out_path: Path) -> None:
 
 
 def ranking_all_readers_ci(out_path: Path) -> None:
-    """Per-reader ranking with 95% bootstrap CI — one subplot per reader."""
+    """Per-reader ranking with 95% bootstrap CI — one subplot per reader.
+
+    Grid layout: 2×3 for 5-6 readers, 1×N for smaller counts."""
     import random
     n = len(READERS)
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 5.5), sharey=True)
+    if n >= 5:
+        ncols = 3
+        nrows = (n + ncols - 1) // ncols
+        fig, axes_grid = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5.5 * nrows), sharey=True)
+        axes = axes_grid.flatten() if nrows > 1 else axes_grid
+    else:
+        fig, axes = plt.subplots(1, n, figsize=(5 * n, 5.5), sharey=True)
+        if n == 1:
+            axes = [axes]
     rng = random.Random(0)
 
     def ci(vals, n=10000):
@@ -613,6 +624,10 @@ def ranking_all_readers_ci(out_path: Path) -> None:
         ax.set_xticklabels(labels, rotation=0, ha="center", fontsize=8)
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
+
+    # Hide any extra (unused) axes if reader count doesn't fill the grid
+    for extra_idx in range(len(READERS), len(axes)):
+        axes[extra_idx].set_visible(False)
 
     axes[0].set_ylabel("Average (P+D)/2 — bars = 95% bootstrap CI", fontweight="bold")
     fig.suptitle("Per-reader ranking with 95% bootstrap CIs (N=18 per cell, 10k resamples).\n"

@@ -28,6 +28,7 @@ READERS = {
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini":  "results/merged/gemini.jsonl",
     "Kimi K2": "results/merged/kimi.jsonl",
+    "Gemma":   "results/merged/gemma.jsonl",
 }
 JUDGES_PD = ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1", "kimi"]
 JUDGES_Q  = ["opus", "sonnet", "haiku"]

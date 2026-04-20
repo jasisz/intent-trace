@@ -1,10 +1,11 @@
-"""Unified LLM provider interface: Anthropic + OpenAI + Google + Moonshot.
+"""Unified LLM provider interface: Anthropic + OpenAI + Google + Moonshot + local Ollama.
 
 Model ID dispatch:
   - claude-*                           → Anthropic
   - gpt-*, chatgpt-*, o1-*, o3-*, o4-* → OpenAI
   - gemini-*, text-bison, chat-bison   → Google
   - kimi-*, moonshot-*                 → Moonshot (OpenAI-compatible API)
+  - anything with ":" (e.g. gemma4:e4b) → local Ollama (HTTP to localhost:11434)
 """
 from __future__ import annotations
 
@@ -21,6 +22,12 @@ def is_google_model(model: str) -> bool:
 
 def is_moonshot_model(model: str) -> bool:
     return model.startswith(("kimi-", "moonshot-"))
+
+
+def is_ollama_model(model: str) -> bool:
+    # Ollama model IDs use "name:tag" format (gemma4:e4b, llama3:70b, etc.).
+    # Cloud model IDs never contain ":".
+    return ":" in model
 
 
 @lru_cache(maxsize=1)
@@ -52,6 +59,23 @@ def _moonshot_client():
 
 def call_llm(model: str, system: str, user: str, max_tokens: int = 512) -> str:
     """Send a single-turn system+user prompt, return assistant text."""
+    if is_ollama_model(model):
+        # Ollama local inference. Gemma (at least gemma4:e4b) silently ignores
+        # the system role — merge system into user so instructions are honored.
+        import requests
+        combined = f"{system}\n\n{user}" if system else user
+        r = requests.post(
+            "http://localhost:11434/api/chat",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": combined}],
+                "stream": False,
+                "options": {"num_predict": max_tokens},
+            },
+            timeout=180,
+        )
+        r.raise_for_status()
+        return r.json()["message"]["content"] or ""
     if is_google_model(model):
         from google.genai import types
         # Gemini 2.5 Pro is always-thinking — setting thinking_budget=0 raises

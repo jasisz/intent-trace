@@ -224,13 +224,15 @@ READER_PATHS = {
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini Flash": "results/merged/gemini.jsonl",
     "Kimi K2": "results/merged/kimi.jsonl",
+    "Gemma 4 e4b": "results/merged/gemma.jsonl",
 }
 READER_COLORS = {
     "Sonnet": AMBER,            # Anthropic — brand amber
     "Opus": AMBER_DARK,         # Anthropic — dark amber
     "gpt-4.1": SLATE,           # OpenAI — slate
-    "Gemini Flash": "#3b82f6",  # Google — blue
+    "Gemini Flash": "#3b82f6",  # Google cloud — blue
     "Kimi K2": "#9333ea",       # Moonshot — purple
+    "Gemma 4 e4b": "#16a34a",   # Google OSS — green
 }
 
 

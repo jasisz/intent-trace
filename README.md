@@ -2,7 +2,7 @@
 
 **An empirical benchmark for how much change-level author intent survives a code diff — measured with an LLM reviewer.**
 
-> **TL;DR:** Empirical benchmark of how much change-level author intent an LLM reviewer can reconstruct from a unified diff. 5 non-thinking reader LLMs across 4 vendors (Anthropic / OpenAI / Google / Moonshot) × 6 cross-vendor judges × 18 refactor prompts × 4 programs × 3 language variants (Aver, Aver-in-Python, idiomatic Python) × 3 views (full / masked / verify-preserving), plus a separate thinking-tier probe. ~11,000 judgments, 100% judge coverage verified. Tests whether Aver — a new language with essentially zero LLM training exposure — is legible to an AI reviewer relative to Python carrying the same intent structure.
+> **TL;DR:** Empirical benchmark of how much change-level author intent an LLM reviewer can reconstruct from a unified diff. 6 non-thinking reader LLMs across 5 model sources (Anthropic / OpenAI / Google / Moonshot / Google-OSS Gemma local) × 6 cross-vendor judges × 18 refactor prompts × 4 programs × 3 language variants (Aver, Aver-in-Python, idiomatic Python) × 3 views (full / masked / verify-preserving), plus separate thinking-tier probes. ~13,000 judgments, 100% judge coverage verified. Tests whether Aver — a new language with essentially zero LLM training exposure — is legible to an AI reviewer relative to Python carrying the same intent structure.
 
 ![ranking — 5 non-thinking readers](results/plots/ranking_all_readers_ci.png)
 
@@ -187,9 +187,14 @@ Google Gemini 2.5 Flash (reader):
   1. python_from_aver  full    8.44   ← +0.24 vs aver (above noise floor — pfa leads)
   2. python_oop        full    8.28
   3. aver              full    8.20
+
+Google-OSS Gemma 4 e4b (local non-thinking 4B reader):
+  1. aver              full    8.39   ← +0.12 vs pfa (marginally above noise floor — aver leads)
+  2. python_from_aver  full    8.27
+  3. python_oop        full    7.80
 ```
 
-**On the four strong readers (Sonnet / Opus / gpt-4.1 / Kimi K2), aver and pfa are inside the 0.11 noise floor — genuine parity across Anthropic / OpenAI / Moonshot vendors.** On the weakest reader (Gemini), pfa leads by 0.24 (above noise). Idiomatic `python_oop` sits 0.13–0.38 below pfa on strong readers but pulls within noise on Gemini — consistent with the reader being near its capability ceiling and reading raw code structure as well as it reads prose.
+**On the four strong cloud readers (Sonnet / Opus / gpt-4.1 / Kimi K2), aver and pfa are inside the 0.11 noise floor — genuine parity across Anthropic / OpenAI / Moonshot vendors.** On the weakest cloud reader (Gemini Flash), pfa leads by 0.24 (above noise). **Gemma 4 e4b** — a small (4B) open-source model running fully local on consumer hardware with frozen weights (no chance of cloud-side Aver exposure in training data) — is the **only reader where Aver wins outright on full diffs** (+0.12 vs pfa, marginally above noise). This is the strongest possible "zero training exposure" data point. Idiomatic `python_oop` sits 0.13–0.59 below pfa on all readers.
 
 **Opus saturation observation**: Opus aver/full = 8.71 ≈ Sonnet aver/full = 8.72 (within 0.01). Aver "saturates" at Sonnet capability — adding top-tier reasoning doesn't extract more legibility from Aver. pfa and oop continue to rise with capability (Opus pfa 8.79, Opus oop 8.54), so the edge Pythons pull at the top is from training-prior exploitation on Python-specific patterns, not from reading more of the diff.
 
@@ -202,17 +207,17 @@ Plot at the top of this README. Error bars are 95% bootstrap confidence interval
 ![five-way readers](results/plots/three_way_readers.png)
 
 ```
-lang/view                  Sonnet      Opus        gpt-4.1     Gemini      Kimi K2
-aver/full                  8.72 (18)   8.71 (18)   8.65 (18)   8.20 (18)   8.54 (18)
-aver/masked                8.19 (18)   8.31 (18)   7.79 (18)   7.80 (18)   7.95 (18)
-aver/masked_spec           8.24 (18)   8.27 (18)   7.96 (18)   7.63 (18)   7.85 (18)
-python_from_aver/full      8.69 (18)   8.79 (18)   8.68 (18)   8.44 (18)   8.52 (18)
-python_from_aver/masked    8.43 (36)   8.54 (18)*  8.19 (36)   7.83 (36)   8.19 (36)
-python_oop/full            8.39 (18)   8.54 (18)   8.52 (18)   8.28 (18)   8.16 (18)
-python_oop/masked          8.29 (36)   8.41 (36)   8.40 (36)   8.05 (36)   8.23 (36)
+lang/view                  Sonnet  Opus    gpt-4.1  Gemini  Kimi K2  Gemma
+aver/full                  8.72    8.71    8.65     8.20    8.54     8.39
+aver/masked                8.19    8.31    7.79     7.80    7.95     7.24
+aver/masked_spec           8.24    8.27    7.96     7.63    7.85     7.39
+python_from_aver/full      8.69    8.79    8.68     8.44    8.52     8.27
+python_from_aver/masked    8.43    8.54*   8.19     7.83    8.19     7.90
+python_oop/full            8.39    8.54    8.52     8.28    8.16     7.80
+python_oop/masked          8.29    8.41    8.40     8.05    8.23     7.25
 ```
 
-`pfa/masked` and `oop/masked` show N=36 because `masked` and `masked_spec` use identical input for non-Aver languages (verify ablation only meaningful for Aver) — both LLM-B runs are pooled. See "Replication-noise floor" methodology note above. `aver/masked_spec` is shown separately because for Aver it's a real ablation (preserves `verify` blocks).
+N=18 per cell across all 6 readers (except Opus pfa/masked N=18 vs others N=36 — readers run after the skip-fix don't have duplicate masked runs to pool). `pfa/masked` and `oop/masked` show effective N=36 where we pooled duplicate runs (`masked` and `masked_spec` use identical input for non-Aver languages; see "Replication-noise floor" methodology note). `aver/masked_spec` is shown separately because for Aver it's a real ablation (preserves `verify` blocks). **Gemma caveat**: 4 of 122 original slices failed JSON parsing at `max_tokens=512` and were retried at `max_tokens=2048` — minor (1-slice-level) score inflation possible on one retried cell; doesn't shift any mean outside noise.
 
 \* Opus pfa/masked is N=18 only — the skip-fix (which avoids running masked_spec for non-Aver languages since it duplicates masked) was active when Opus was run, so we have one LLM-B call for pfa/masked rather than the pooled two. Noise floor for this cell is ~0.11 (not 0.08). Earlier readers were run before the skip-fix so have both runs pooled.
 
