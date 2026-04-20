@@ -611,8 +611,8 @@ def ranking_all_readers_ci(out_path: Path) -> None:
 
         x_pos = np.arange(len(items))
         bars = ax.bar(x_pos, values, color=colors, edgecolor=SLATE, linewidth=1.0,
-                      yerr=[err_lo, err_hi], ecolor="#000000", capsize=4,
-                      error_kw={"linewidth": 1.6, "zorder": 10})
+                      yerr=[err_lo, err_hi], ecolor="#dc2626", capsize=4,
+                      error_kw={"linewidth": 1.8, "zorder": 10})
         for bar, h in zip(bars, hatches):
             bar.set_hatch(h)
         for bar, v, ehi in zip(bars, values, err_hi):
