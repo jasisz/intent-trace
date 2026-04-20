@@ -269,7 +269,7 @@ def plot_3way_readers(out_path: Path) -> None:
     ax.set_title(f"Intent-trace: {n_readers} non-thinking readers across 5 model sources",
                  fontweight="bold", pad=15, color=SLATE)
     ax.set_ylim(7.0, 9.3)
-    ax.legend(loc="lower right", frameon=True,
+    ax.legend(loc="upper right", frameon=True, ncol=2,
               facecolor=BG, edgecolor=SLATE_LIGHT)
     ax.set_axisbelow(True)
     for spine in ["top", "right"]:
