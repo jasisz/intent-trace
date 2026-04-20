@@ -54,16 +54,17 @@ def call_llm(model: str, system: str, user: str, max_tokens: int = 512) -> str:
     """Send a single-turn system+user prompt, return assistant text."""
     if is_google_model(model):
         from google.genai import types
-        # Disable thinking so output tokens aren't silently consumed by
-        # the reasoning chain (Gemini 2.5 enables thinking by default).
+        # Gemini 2.5 Pro is always-thinking — setting thinking_budget=0 raises
+        # INVALID_ARGUMENT. For Flash and others, explicitly disable thinking so
+        # output tokens aren't silently consumed by the reasoning chain.
+        is_pro = model.startswith("gemini-2.5-pro")
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            **({} if is_pro else {"thinking_config": types.ThinkingConfig(thinking_budget=0)}),
+        )
         r = _google_client().models.generate_content(
-            model=model,
-            contents=user,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                max_output_tokens=max_tokens,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
+            model=model, contents=user, config=config,
         )
         return r.text or ""
     if is_openai_model(model):

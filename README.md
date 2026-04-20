@@ -276,9 +276,13 @@ The pattern replicates across every reader: `aver/masked` is the lowest-scoring 
 
 Aver's payment_ops loss concentrates on architectural refactors — where both Aver and idiomatic OOP Python struggle (8.19 and 7.61), and only heavy-doc `python_from_aver` survives (8.65). On additive prompts the gap shrinks from 4× noise to inside-noise.
 
-### Thinking-tier probe — direct Kimi K2 vs K2.5 ablation
+### Thinking-tier probe — Kimi K2 vs K2.5 (and more)
 
-We ran one additional reader outside the main non-thinking ensemble: **Kimi K2.5** (thinking-by-default). It's the cleanest possible single-variable ablation — same vendor, same model family as `kimi-k2-0905-preview` (our non-thinking K2 reader), only the thinking flag flipped. This is a *probe*, not a full thinking-tier study — one data point to see whether scaling the experiment to all-thinking readers would be worth the ~10× cost.
+![thinking probe](results/plots/thinking_probe.png)
+
+We ran additional thinking readers outside the main non-thinking ensemble to probe whether scaling to an all-thinking benchmark would be worth the ~10× cost. Each thinking reader is paired with its closest non-thinking counterpart (same vendor where possible). Judges stay non-thinking (same 6-judge ensemble as main). This is a *probe*, not a full thinking-tier study.
+
+**Primary pair: Kimi K2 (non-thinking) vs K2.5 (thinking)**
 
 | view | K2 (non-thinking) | K2.5 (thinking) | Δ |
 |---|---:|---:|---:|

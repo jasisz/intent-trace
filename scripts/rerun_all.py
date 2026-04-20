@@ -29,12 +29,14 @@ from intent_trace.judges import judge_prompt_axis, judge_diff_axis
 from intent_trace.llm_provider import call_llm
 
 READER_MODELS = {
-    "sonnet":         "claude-sonnet-4-6",
-    "gpt4.1":         "gpt-4.1",
-    "gemini":         "gemini-2.5-flash",
-    "kimi":           "kimi-k2-0905-preview",
-    "opus":           "claude-opus-4-7",
-    "kimi2.5":        "kimi-k2.5",
+    "sonnet":          "claude-sonnet-4-6",
+    "gpt4.1":          "gpt-4.1",
+    "gemini":          "gemini-2.5-flash",
+    "kimi":            "kimi-k2-0905-preview",
+    "opus":            "claude-opus-4-7",
+    "kimi2.5":         "kimi-k2.5",
+    "kimi-thinking":   "kimi-k2-thinking",
+    "gemini-pro":      "gemini-2.5-pro",
 }
 JUDGES = {
     "opus":    "claude-opus-4-7",
@@ -96,9 +98,10 @@ def llm_b(model, lang, diff):
         '{"intent": "one sentence, primary intent", "confidence": "low|medium|high", "unclear": "optional one-line note, or null"}'
         "\n\nIMPORTANT: raw JSON only, no markdown, no preamble."
     )
-    # Thinking models (kimi-k2.5, kimi-k2-thinking) consume tokens for reasoning_content
-    # before the visible answer — give them headroom.
-    is_thinking = "thinking" in model or "k2.5" in model
+    # Thinking models (kimi-k2.5, kimi-k2-thinking, gemini-2.5-pro) consume tokens
+    # for reasoning_content before the visible answer — give them headroom.
+    is_thinking = ("thinking" in model or "k2.5" in model
+                   or model.startswith("gemini-2.5-pro"))
     max_tok = 2048 if is_thinking else 512
     text = call_llm(model, system, user, max_tokens=max_tok).strip()
     m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)

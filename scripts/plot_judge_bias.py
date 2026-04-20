@@ -754,6 +754,88 @@ def interjudge_heatmap(out_path: Path) -> None:
     print(f"wrote: {out_path}")
 
 
+def thinking_probe(out_path: Path) -> None:
+    """Thinking vs non-thinking readers, same-vendor pairs where possible.
+
+    Current pairs:
+      - Kimi K2-0905 (non-thinking) vs Kimi K2.5 (thinking; newer generation)
+      - Kimi K2-0905 (non-thinking) vs Kimi K2-thinking (same generation, clean)
+      - Gemini 2.5 Flash (non-thinking) vs Gemini 2.5 Pro (thinking; tier up)
+
+    Only draws pairs where both files exist. X-axis = lang/view cells.
+    """
+    PAIRS = [
+        ("Kimi K2 (non-thinking)", "results/merged/kimi.jsonl",
+         "Kimi K2.5 (thinking)",    "results/merged/kimi2.5.jsonl"),
+        ("Kimi K2 (non-thinking)", "results/merged/kimi.jsonl",
+         "Kimi K2-thinking",        "results/merged/kimi-thinking.jsonl"),
+        ("Gemini Flash (non-thinking)", "results/merged/gemini.jsonl",
+         "Gemini 2.5 Pro (thinking)",   "results/merged/gemini-pro.jsonl"),
+    ]
+    available = [(n1, p1, n2, p2) for (n1, p1, n2, p2) in PAIRS
+                 if Path(p1).exists() and Path(p2).exists()
+                 and sum(1 for _ in open(p2)) >= 18]
+    if not available:
+        print("thinking_probe: no thinking-reader data yet, skipping")
+        return
+    n = len(available)
+    fig, axes = plt.subplots(n, 1, figsize=(13, 4.5 * n), sharex=True)
+    if n == 1:
+        axes = [axes]
+    CELLS = [("aver","full"),("aver","masked"),("aver","masked_spec"),
+             ("python_from_aver","full"),("python_from_aver","masked"),
+             ("python_oop","full"),("python_oop","masked")]
+    labels = [f"{l}\n{v}" for l, v in CELLS]
+
+    for ax, (name_nt, path_nt, name_t, path_t) in zip(axes, available):
+        rows_nt = [json.loads(l) for l in open(path_nt) if l.strip()]
+        rows_t = [json.loads(l) for l in open(path_t) if l.strip()]
+        def bucket(rows):
+            bk = defaultdict(list)
+            for r in rows:
+                p = r.get("judgment_prompt",{}).get("median")
+                d = r.get("judgment_diff",{}).get("median")
+                if p is None or d is None: continue
+                bk[(r["lang"], r["view"])].append((p+d)/2)
+            return bk
+        bk_nt, bk_t = bucket(rows_nt), bucket(rows_t)
+        vals_nt = [mean(bk_nt[k]) if bk_nt[k] else 0 for k in CELLS]
+        vals_t  = [mean(bk_t[k])  if bk_t[k]  else 0 for k in CELLS]
+        deltas  = [t - nt for nt, t in zip(vals_nt, vals_t)]
+
+        x = np.arange(len(CELLS))
+        w = 0.4
+        b1 = ax.bar(x - w/2, vals_nt, w, color=SLATE_MUTED, edgecolor=SLATE,
+                    linewidth=1.0, label=name_nt, hatch="////")
+        b2 = ax.bar(x + w/2, vals_t, w, color=AMBER, edgecolor=SLATE,
+                    linewidth=1.0, label=name_t)
+        for bars, vals in ((b1, vals_nt), (b2, vals_t)):
+            for bar, v in zip(bars, vals):
+                if v > 0:
+                    ax.text(bar.get_x() + bar.get_width()/2, v + 0.04,
+                            f"{v:.2f}", ha="center", va="bottom",
+                            fontsize=8, color=SLATE)
+        for i, d in enumerate(deltas):
+            color = AMBER_DARK if abs(d) >= 0.20 else (AMBER if abs(d) >= 0.1 else SLATE_MUTED)
+            ax.text(i, 7.05, f"Δ {d:+.2f}", ha="center", va="bottom",
+                    fontsize=9, fontweight="bold", color=color)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=9)
+        ax.set_ylim(7.0, 9.2)
+        ax.set_ylabel("Average (P+D)/2", fontweight="bold")
+        ax.legend(loc="upper right", frameon=True, facecolor=BG, edgecolor=SLATE_LIGHT)
+        ax.set_title(f"{name_t} vs {name_nt}", fontweight="bold", fontsize=11)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+
+    fig.suptitle("Thinking-tier probe: thinking reader vs non-thinking counterpart.\n"
+                 "Δ = (thinking − non-thinking); positive = thinking scores higher.",
+                 fontweight="bold", fontsize=11, y=1.00)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, facecolor=BG, bbox_inches="tight")
+    print(f"wrote: {out_path}")
+
+
 def main() -> None:
     out_dir = Path("results/plots")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -768,6 +850,7 @@ def main() -> None:
     ranking_all_readers_ci(out_dir / "ranking_all_readers_ci.png")
     diff_type_stratification(out_dir / "diff_type_stratification.png")
     interjudge_heatmap(out_dir / "interjudge_heatmap.png")
+    thinking_probe(out_dir / "thinking_probe.png")
 
 
 if __name__ == "__main__":
