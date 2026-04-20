@@ -18,8 +18,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 AMBER = "#d97706"
-TEAL = "#0d9488"
-GRAY = "#94a3b8"
+AMBER_LIGHT = "#f59e0b"
 SLATE = "#1e293b"
 SLATE_MUTED = "#64748b"
 SLATE_LIGHT = "#e2e8f0"
@@ -35,9 +34,9 @@ READERS = [
 ]
 
 SERIES = [
-    ("aver",             "Aver",                           AMBER),
-    ("python_from_aver", "Python (faithful transliteration)", TEAL),
-    ("python_oop",       "Python (idiomatic OOP)",         GRAY),
+    ("aver",             "Aver",                              AMBER),
+    ("python_from_aver", "Python (faithful transliteration)", SLATE),
+    ("python_oop",       "Python (idiomatic OOP)",            SLATE_MUTED),
 ]
 
 mpl.rcParams.update({
@@ -130,14 +129,14 @@ def build_plot(out_path: Path, *, with_ci: bool) -> None:
                   fontsize=14, fontweight="bold")
     ax.set_ylim(7.0, 9.4)
 
-    # Title + subtitle (left-aligned, social-media style)
+    # Title + subtitle (left-aligned, social-media style; ~1.6× line-height gap)
     fig.suptitle(
         "Full diffs: intent recovery by reader",
         fontsize=22, fontweight="bold", color=SLATE,
-        x=0.02, y=0.97, ha="left",
+        x=0.02, y=0.98, ha="left",
     )
     fig.text(
-        0.02, 0.925,
+        0.02, 0.915,
         "Raw unified diff only  •  no system prompt  •  no language hint  •  no primer",
         fontsize=13, color=SLATE_MUTED, style="italic", ha="left",
     )
@@ -164,7 +163,7 @@ def build_plot(out_path: Path, *, with_ci: bool) -> None:
         ax.spines[spine].set_visible(False)
     ax.set_axisbelow(True)
 
-    plt.subplots_adjust(top=0.86, bottom=0.16, left=0.06, right=0.98)
+    plt.subplots_adjust(top=0.83, bottom=0.16, left=0.06, right=0.98)
     plt.savefig(out_path, dpi=180, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote: {out_path}")
