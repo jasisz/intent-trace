@@ -611,8 +611,8 @@ def ranking_all_readers_ci(out_path: Path) -> None:
 
         x_pos = np.arange(len(items))
         bars = ax.bar(x_pos, values, color=colors, edgecolor=SLATE, linewidth=1.0,
-                      yerr=[err_lo, err_hi], ecolor=SLATE, capsize=3,
-                      error_kw={"linewidth": 0.9})
+                      yerr=[err_lo, err_hi], ecolor="#000000", capsize=4,
+                      error_kw={"linewidth": 1.6, "zorder": 10})
         for bar, h in zip(bars, hatches):
             bar.set_hatch(h)
         for bar, v, ehi in zip(bars, values, err_hi):
@@ -634,6 +634,20 @@ def ranking_all_readers_ci(out_path: Path) -> None:
                  "Top-of-ranking intervals overlap on every reader — visual form of 'parity within noise'.",
                  fontweight="bold", fontsize=11, y=1.02)
     plt.tight_layout()
+    # Add horizontal separator line between rows (grid > 1 row only)
+    if n >= 5:
+        # Get row separation y-coordinate (between subplot rows)
+        fig.subplots_adjust(hspace=0.55)
+        # Draw separator line across the figure between rows
+        import matplotlib.lines as mlines
+        # Get positions of top and bottom rows
+        top_row_bottom = axes[0].get_position().y0
+        bot_row_top = axes[ncols].get_position().y1 if len(axes) > ncols else 0
+        sep_y = (top_row_bottom + bot_row_top) / 2
+        sep = mlines.Line2D([0.05, 0.95], [sep_y, sep_y],
+                            color=SLATE, linewidth=1.0,
+                            transform=fig.transFigure, figure=fig)
+        fig.add_artist(sep)
     plt.savefig(out_path, dpi=150, facecolor=BG, bbox_inches="tight")
     print(f"wrote: {out_path}")
 
