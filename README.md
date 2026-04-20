@@ -2,15 +2,9 @@
 
 **An empirical benchmark for how much change-level author intent survives a code diff — measured with an LLM reviewer.**
 
-> **TL;DR:** 5 non-thinking reader LLMs (4 vendors) × 6 cross-vendor judges × 18 refactor prompts × 3 language variants × 3 views, ~11k judgments, 100% coverage verified. **Aver** — a new language with essentially zero LLM training exposure — reads **within the 0.11 noise floor** of Aver-in-Python on 4 of 5 readers (Sonnet, Opus, gpt-4.1, Kimi K2); only Gemini Flash shows pfa leading clearly. On masked diffs (prose stripped) Aver loses by ~0.30 — but a thinking-tier probe (Kimi K2.5) closes half that gap, suggesting structural intent is recoverable without prose if the reader can reason.
-
-**Main ensemble (5 non-thinking readers across 4 vendors)** — per-reader ranking with 95% bootstrap CIs:
+> **TL;DR:** Empirical benchmark of how much change-level author intent an LLM reviewer can reconstruct from a unified diff. 5 non-thinking reader LLMs across 4 vendors (Anthropic / OpenAI / Google / Moonshot) × 6 cross-vendor judges × 18 refactor prompts × 4 programs × 3 language variants (Aver, Aver-in-Python, idiomatic Python) × 3 views (full / masked / verify-preserving), plus a separate thinking-tier probe. ~11,000 judgments, 100% judge coverage verified. Tests whether Aver — a new language with essentially zero LLM training exposure — is legible to an AI reviewer relative to Python carrying the same intent structure.
 
 ![ranking — 5 non-thinking readers](results/plots/ranking_all_readers_ci.png)
-
-**Thinking-tier probe** — direct ablation between each thinking reader and its non-thinking counterpart (judges stay non-thinking; see Methodology):
-
-![thinking probe](results/plots/thinking_probe.png)
 
 This repo tests a claim from the [Aver language](https://averlang.dev) project: that **structurally declared intent** (signatures, description markers, decision blocks, verify blocks) makes code legible for AI review without special training on the language.
 
