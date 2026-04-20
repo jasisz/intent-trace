@@ -38,6 +38,7 @@ READER_MODELS = {
     "opus":            "claude-opus-4-7",
     "kimi2.5":         "kimi-k2.5",
     "kimi-thinking":   "kimi-k2-thinking",
+    "kimi2.6":         "kimi-k2.6",
     "gemini-pro":      "gemini-2.5-pro",
     "gemma":           "gemma4:e4b",
     "gemma26b":        "gemma4:26b",
@@ -108,7 +109,7 @@ def llm_b(model, lang, diff):
     # notably terser JSON than non-thinking counterparts. Bumped to 4096.
     # Ollama models (including non-thinking gemma4:e4b) occasionally return
     # truncated JSON at 512 — bump to 2048 for reliability.
-    is_thinking = ("thinking" in model or "k2.5" in model
+    is_thinking = ("thinking" in model or "k2.5" in model or "k2.6" in model
                    or model.startswith("gemini-2.5-pro")
                    or model == "gemma4:26b")
     is_ollama = ":" in model
