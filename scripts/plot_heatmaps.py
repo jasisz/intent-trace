@@ -104,7 +104,7 @@ def plot_main_heatmap(data: dict, out_path: Path) -> None:
                        color=SLATE_LIGHT, linewidth=0.4)
 
     ax.set_title("Intent-trace: reader × program × language × view\n"
-                 "(avg (P+D)/2 per cell, 5-judge cross-vendor ensemble)",
+                 "(avg (P+D)/2 per cell, 6-judge cross-vendor ensemble)",
                  fontweight="bold", pad=15, fontsize=12)
     cb = plt.colorbar(im, ax=ax, shrink=0.5, pad=0.02)
     cb.set_label("avg score", fontweight="bold")

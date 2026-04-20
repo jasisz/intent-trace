@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Extra plots focused on the 5-judge cross-vendor findings:
+"""Extra plots focused on the 6-judge cross-vendor findings:
 
-1. judge_reader_heatmap.png — 5 judges × 3 readers grid, showing per-cell means
-2. judges_3v5.png           — 3-judge (Claude-only) vs 5-judge per-reader ranking shift
-3. judge_family_x_lang.png  — Claude-3 vs OpenAI-2 judge family means per language
-4. ablation_all_readers.png — full→masked drop per language, all 3 readers side-by-side
+1. judge_reader_heatmap.png — 6 judges × N readers grid, showing per-cell means
+2. judges_3v5.png           — 3-judge (Claude-only) vs 6-judge per-reader ranking shift
+3. judge_family_x_lang.png  — Claude-3 vs OpenAI-2 vs Moonshot-1 judge family means per language
+4. ablation_all_readers.png — full→masked drop per language, per-reader grid
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def load_rows(path):
 
 
 def judge_reader_heatmap(out_path: Path) -> None:
-    """5 judges × 3 readers heatmap; cells are mean (P+D)/2 over all full+masked slices."""
+    """Judges × readers heatmap; cells are mean (P+D)/2 over all full+masked slices."""
     matrix = np.zeros((len(JUDGES), len(READERS)))
     for i, judge in enumerate(JUDGES):
         for j, (_, path) in enumerate(READERS.items()):
@@ -125,7 +125,7 @@ def judge_reader_heatmap(out_path: Path) -> None:
 
 
 def judges_3v5_comparison(out_path: Path) -> None:
-    """For each reader, show per-language full-view ranking under 3-judge (Claude-only) vs 5-judge."""
+    """For each reader, show per-language full-view ranking under 3-judge (Claude-only) vs 6-judge."""
     n = len(READERS)
     fig, axes = plt.subplots(1, n, figsize=(4.7 * n, 5.5), sharey=True)
 
@@ -160,7 +160,7 @@ def judges_3v5_comparison(out_path: Path) -> None:
         b1 = ax.bar(x - w / 2, three_vals, w, color=SLATE_MUTED, edgecolor=SLATE,
                     linewidth=1.0, label="3-judge (Claude only)")
         b2 = ax.bar(x + w / 2, five_vals, w, color=AMBER, edgecolor=SLATE,
-                    linewidth=1.0, label="5-judge (cross-vendor)")
+                    linewidth=1.0, label="6-judge (cross-vendor)")
         for bars, vals in ((b1, three_vals), (b2, five_vals)):
             for bar, v in zip(bars, vals):
                 ax.text(bar.get_x() + bar.get_width() / 2, v + 0.04, f"{v:.2f}",
@@ -365,7 +365,7 @@ PROGRAM_LINES = {"inventory": 250, "workflow": 200, "taskmanager": 400, "payment
 
 
 def program_lang_ranking(out_path: Path) -> None:
-    """Per program, (full view) avg across 3 readers per language. Shows which programs favor which style."""
+    """Per program, (full view) avg across all readers per language. Shows which programs favor which style."""
     fig, ax = plt.subplots(figsize=(12.5, 6))
 
     # per program × lang: mean across readers of (P+D)/2 for full view
@@ -395,7 +395,7 @@ def program_lang_ranking(out_path: Path) -> None:
         [f"{p}\n(~{PROGRAM_LINES[p]} lines)" for p in PROGRAMS_ORDERED],
         fontsize=10, fontweight="bold",
     )
-    ax.set_ylabel("Full-view score (P+D)/2, averaged across 3 readers", fontweight="bold")
+    ax.set_ylabel(f"Full-view score (P+D)/2, averaged across {len(READERS)} readers", fontweight="bold")
     ax.set_title("Per program: language ranking (higher = more legible to reviewers)",
                  fontweight="bold", fontsize=12, pad=12)
     ax.set_ylim(7.0, 9.2)
@@ -480,7 +480,7 @@ def program_complexity_advantage(out_path: Path) -> None:
 
 
 def program_reader_heatmap(out_path: Path) -> None:
-    """12 rows (program × lang) × 3 readers, full view only. More compact than the
+    """12 rows (program × lang) × N readers, full view only. More compact than the
     existing 24-row heatmap that also includes masked."""
     row_keys = []
     row_labels = []
