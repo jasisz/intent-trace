@@ -296,15 +296,15 @@ The pattern replicates across every reader: `aver/masked` is the lowest-scoring 
 
 Aver's payment_ops loss concentrates on architectural refactors — where both Aver and idiomatic OOP Python struggle (8.19 and 7.61), and only heavy-doc `python_from_aver` survives (8.65). On additive prompts the gap shrinks from 4× noise to inside-noise.
 
-### Thinking-tier probe — Kimi K2 vs K2.5 (and more)
+### Thinking-tier probe — four reader pairs
 
 ![thinking probe](results/plots/thinking_probe.png)
 
-We ran additional thinking readers outside the main non-thinking ensemble to probe whether scaling to an all-thinking benchmark would be worth the ~10× cost. Each thinking reader is paired with its closest non-thinking counterpart (same vendor where possible). Judges stay non-thinking (same 6-judge ensemble as main). This is a *probe*, not a full thinking-tier study.
+Four thinking readers outside the main non-thinking ensemble, each paired with its closest non-thinking counterpart (same vendor where possible). Judges stay non-thinking (same 6-judge ensemble as main) — what we measure is *reader-side thinking*, with judges held constant. All pairs N=18 matched prompts, 100% 6-judge coverage. See also Finding #7 for the interpretation.
 
-**Primary pair: Kimi K2 (non-thinking) vs K2.5 (thinking)**
+**Pair 1 — Kimi K2-0905 (non-thinking) → K2.5 (thinking + newer generation)**
 
-| view | K2 (non-thinking) | K2.5 (thinking) | Δ |
+| view | K2 | K2.5 | Δ |
 |---|---:|---:|---:|
 | aver / full | 8.54 | **8.74** | +0.20 |
 | aver / masked | 7.95 | **8.23** | +0.28 |
@@ -314,14 +314,67 @@ We ran additional thinking readers outside the main non-thinking ensemble to pro
 | oop / full | 8.16 | **8.51** | +0.35 |
 | oop / masked | 8.23 | 8.41 | +0.18 |
 
-**Aver/masked gap shrinks from −0.29 to −0.14** (comparing aver vs pfa within K2.5) — when the reader thinks, stripping prose hurts Aver less. One interpretation: Aver's intent is structurally present (in `?`, `match` exhaustiveness, function signatures, module layout), and a thinking reader can reconstruct it even without the narrative prose. A non-thinking reader does not have the budget to do that reconstruction in-line, so the prose carries more of the load.
+Consistent +0.13 to +0.36 lift; aver/masked gap vs pfa/masked shrinks from −0.29 (in K2) to −0.14 (in K2.5). But thinking and generation are confounded — K2.5 is a newer model, not just K2 with thinking on.
 
-Limits of this probe:
-- **N=1** within the thinking tier — one model, one vendor. Anthropic Opus extended-thinking, Gemini 2.5 Pro, or OpenAI o-series could move differently.
-- **Thinking judges would be a separate experiment.** Here the judges stay non-thinking (same 6-judge ensemble as main) — what we measure is *reader-side thinking*, with judges held constant. A full all-thinking ensemble (thinking readers + thinking judges) is estimated at ~$1,500+ and left as future work.
-- **Kimi K2.5 is a newer model generation** than K2-0905, not *only* thinking flipped. Some of the +0.20 to +0.35 gain may be generational, not thinking. A cleaner ablation would use `kimi-k2-thinking` (K2 snapshot with thinking only) vs K2-0905 — same generation, only thinking flipped. Left as follow-up.
+**Pair 2 — Kimi K2-0905 (non-thinking) → K2-thinking (same snapshot, thinking flag flipped only)**
 
-Thinking reader data: `results/merged/kimi2.5.jsonl` (126 slices, 100% coverage under 6-judge ensemble).
+This is the **clean thinking-flag control** — see the "Clean thinking-flag isolation" subsection in Methodology.
+
+| view | K2 | K2-thinking | Δ |
+|---|---:|---:|---:|
+| aver / full | 8.54 | 8.42 | **−0.12** |
+| aver / masked | 7.95 | 7.95 | **0.00** (exactly) |
+| aver / masked_spec | 7.85 | 7.79 | **−0.06** |
+| pfa / full | 8.52 | 8.71 | +0.19 |
+| pfa / masked | 8.24 | 8.17 | −0.08 |
+| oop / full | 8.16 | 8.26 | +0.11 |
+| oop / masked | 8.27 | 8.16 | −0.11 |
+
+**All seven cells inside the 0.11 noise floor.** Pure thinking flip on the same weights produces ≈ zero improvement. The ~+0.30 gap-closing seen in K2.5 is entirely generational, not the thinking flag.
+
+**Pair 3 — Gemini 2.5 Flash (non-thinking) → Gemini 2.5 Pro (thinking + tier-up)**
+
+| view | Flash | Pro | Δ |
+|---|---:|---:|---:|
+| aver / full | 8.20 | **8.72** | +0.52 |
+| aver / masked | 7.80 | **8.56** | +0.76 |
+| aver / masked_spec | 7.63 | 8.48 | +0.85 |
+| pfa / full | 8.44 | **8.76** | +0.32 |
+| pfa / masked | 7.83 | 8.41 | +0.58 |
+| oop / full | 8.28 | **8.45** | +0.17 |
+| oop / masked | 8.05 | 8.43 | +0.38 |
+
+Biggest lifts of any pair (+0.17 to +0.85). But Flash → Pro is a whole-tier jump, not a same-snapshot thinking flip — generation and thinking are thoroughly confounded.
+
+**Pair 4 — Gemma 4 e4b (non-thinking, 4B) → Gemma 4 26b (thinking, 26B)**
+
+| view | e4b | 26b | Δ |
+|---|---:|---:|---:|
+| aver / full | 8.39 | 8.28 | **−0.10** (saturation) |
+| aver / masked | 7.24 | **7.79** | +0.55 |
+| aver / masked_spec | 7.39 | 7.85 | +0.46 |
+| pfa / full | 8.27 | **8.46** | +0.19 |
+| pfa / masked | 7.90 | 7.91 | **+0.01** (~zero) |
+| oop / full | 7.80 | **8.06** | +0.26 |
+| oop / masked | 7.25 | **7.99** | +0.74 |
+
+Large lifts on masked cells (+0.46 to +0.74); aver/full *goes down* (saturation); pfa/masked essentially unchanged. Size (4B → 26B) and thinking are confounded.
+
+**Taking the four probes together:**
+
+- Pure thinking (K2 → K2-thinking) = zero.
+- Thinking + generation (K2.5) = consistent +0.13 to +0.36.
+- Thinking + tier-up (Gemini Pro) = biggest lifts (+0.17 to +0.85).
+- Thinking + 6.5× size (Gemma 26b) = big lifts on masked only; aver/full saturates.
+
+The thinking flag alone doesn't move the needle. What does is **capability tier** (generation, size, whole-tier model family). Finding #7 develops this interpretation.
+
+Limits of these probes:
+- **Thinking judges would be a separate experiment.** Here judges stay non-thinking (same 6-judge ensemble as main). A full all-thinking ensemble (thinking readers + thinking judges) is estimated at ~$1,500+ and left as future work.
+- **Only one pair (K2 vs K2-thinking) cleanly isolates the thinking flag.** The others mix thinking with generation, tier, or size.
+- **Outside of K2-thinking, no vendor currently publishes a same-snapshot thinking-flag-flipped pair** for Anthropic, OpenAI o-series, or Google Gemini — so extending this clean comparison to more vendors requires vendor support.
+
+Thinking reader data: `results/merged/{kimi2.5,kimi-thinking,gemini-pro,gemma26b}.jsonl` (4 × 126 slices, 100% 6-judge coverage each).
 
 ### Verify-preserving ablation (`masked_spec` vs `masked`)
 
