@@ -167,7 +167,7 @@ def judges_3v5_comparison(out_path: Path) -> None:
                         ha="center", va="bottom", fontsize=8, color=SLATE)
 
         # Callout only on a real reversal: different winner AND the new winner's
-        # score jumped by ≥0.10 between 3-judge and 5-judge (i.e. GPT judges
+        # score jumped by ≥0.10 between 3-judge and 6-judge (i.e. cross-vendor judges
         # meaningfully lifted it, not just tiny noise shuffling).
         top_five = int(np.argmax(five_vals))
         top_three = int(np.argmax(three_vals))

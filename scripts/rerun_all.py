@@ -2,16 +2,18 @@
 """Rerun the full benchmark for one reader (v2 canonical baselines).
 
 Iterates every (program, prompt, lang ∈ {aver, python_from_aver, python_oop},
-view ∈ {full, masked, masked_spec}), regenerates diff + LLM-B guess + 5-judge
-ensemble (Opus + Sonnet + Haiku + gpt-4o + gpt-4.1), and rewrites
+view ∈ {full, masked, masked_spec}), regenerates diff + LLM-B guess + 6-judge
+ensemble (Opus + Sonnet + Haiku + gpt-4o + gpt-4.1 + Kimi K2), and rewrites
 results/merged/<reader>.jsonl from scratch. Skips quality axis.
 
-Run all three readers in parallel (different providers, no rate-limit
-contention):
+Readers can be run in parallel across providers (no rate-limit contention):
 
     uv run --env-file .env python scripts/rerun_all.py sonnet &
     uv run --env-file .env python scripts/rerun_all.py gpt4.1 &
     uv run --env-file .env python scripts/rerun_all.py gemini &
+    uv run --env-file .env python scripts/rerun_all.py kimi &
+    uv run --env-file .env python scripts/rerun_all.py opus &
+    uv run --env-file .env python scripts/rerun_all.py gemma &   # local via Ollama
 """
 from __future__ import annotations
 

@@ -83,7 +83,7 @@ def main() -> None:
             rho = pairwise_spearman(m)
             print(f'{reader:<10} {axis_label:<24} {n_items:>8d} {fmt(a_ord):>8} {fmt(a_int):>8} {fmt(rho):>10}')
 
-    # Pooled across all 3 readers — gives the headline number
+    # Pooled across all readers — gives the headline number
     print("\n=== Pooled across readers (P and D combined per axis) ===\n")
     print(f'{"axis":<24} {"n_items":>8} {"α_ord":>8} {"α_int":>8}')
     for axis_key, axis_label in AXES_PD:

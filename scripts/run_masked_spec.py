@@ -156,9 +156,9 @@ def run_reader(reader: str) -> None:
             print("    LLM-B...", flush=True)
             guess = llm_b_guess(model_b, lang, diff)
             print(f"    guess: {guess.get('intent', '')[:80]}")
-            print("    prompt-axis ensemble (5 judges)...", flush=True)
+            print("    prompt-axis ensemble (6 judges)...", flush=True)
             jp = run_ensemble(judge_prompt_axis, JUDGES_PD, prompt_text, guess["intent"])
-            print("    diff-axis ensemble (5 judges)...", flush=True)
+            print("    diff-axis ensemble (6 judges)...", flush=True)
             jd = run_ensemble(judge_diff_axis, JUDGES_PD, diff, guess["intent"])
 
             slice_obj = {

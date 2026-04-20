@@ -4,7 +4,7 @@
 For slices absent from results/merged/<reader>.jsonl (compared to the
 sonnet canonical set), this runs the full pipeline:
   - LLM-B (reader model) produces a guess
-  - 5-judge ensemble (Claude Opus/Sonnet/Haiku + gpt-4o + gpt-4.1) scores it
+  - 6-judge ensemble (Claude Opus/Sonnet/Haiku + gpt-4o + gpt-4.1 + Kimi K2) scores it
   - append to merged jsonl
 
 Also fills missing __quality__ rows (3-Claude ensemble, no GPT) where
@@ -185,9 +185,9 @@ def main() -> int:
             print("    LLM-B...", flush=True)
             guess = llm_b_guess(model_b, lang, diff)
             print(f"    guess: {guess.get('intent','')[:80]}")
-            print("    prompt-axis ensemble (5 judges)...", flush=True)
+            print("    prompt-axis ensemble (6 judges)...", flush=True)
             jp = run_ensemble(judge_prompt_axis, JUDGES_PD, prompt_text, guess["intent"])
-            print("    diff-axis ensemble (5 judges)...", flush=True)
+            print("    diff-axis ensemble (6 judges)...", flush=True)
             jd = run_ensemble(judge_diff_axis, JUDGES_PD, diff, guess["intent"])
 
             slice_obj = {

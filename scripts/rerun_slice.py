@@ -6,8 +6,8 @@ Usage:
 Example:
     python scripts/rerun_slice.py workflow add_withdraw_action
 
-Drops matching rows from results/merged/{sonnet,gpt4.1,gemini}.jsonl and
-regenerates diff + LLM-B guess + 5-judge ensemble for each (lang, view)
+Drops matching rows from results/merged/*.jsonl (all configured readers) and
+regenerates diff + LLM-B guess + 6-judge ensemble for each (lang, view)
 combination, then writes back in place.
 """
 from __future__ import annotations

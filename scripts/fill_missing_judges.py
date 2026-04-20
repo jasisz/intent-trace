@@ -2,7 +2,7 @@
 """Fill any missing / failed judge scores on merged per-reader JSONL.
 
 Reads results/merged/<reader>.jsonl, and for each scored row (views full /
-masked / masked_spec / no_verify), retries any of the 5 judges whose score
+masked / masked_spec / no_verify), retries any of the 6 judges whose score
 is missing or -1 (failure). Only re-calls the judges that need it — does
 not re-run LLM-B or re-ensemble from scratch.
 

@@ -84,10 +84,10 @@ def main() -> None:
         prompt_rows = [r for r in merged.values()
                        if r["view"] in ("full", "masked")
                        and r.get("judgment_prompt", {}).get("individual")]
-        full_5 = sum(1 for r in prompt_rows
-                     if len(r["judgment_prompt"]["individual"]) >= 5)
+        full_6 = sum(1 for r in prompt_rows
+                     if len(r["judgment_prompt"]["individual"]) >= 6)
         print(f"{reader:8}  total={len(merged)}  prompt/diff-rows={len(prompt_rows)}  "
-              f"with-all-5-judges={full_5}  →  {out_path}")
+              f"with-all-6-judges={full_6}  →  {out_path}")
 
 
 if __name__ == "__main__":
