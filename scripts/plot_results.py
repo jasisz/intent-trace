@@ -25,6 +25,11 @@ LANG_COLORS = {
     "python_from_aver": SLATE,
     "python_oop": SLATE_MUTED,
 }
+LANG_COLORS_MASKED = {
+    "aver": "#fbbf24",              # light amber — visibly distinct from full AMBER
+    "python_from_aver": "#64748b",  # slate medium
+    "python_oop": "#cbd5e1",         # very light slate
+}
 LANG_LABELS = {
     "aver": "Aver",
     "python_from_aver": "Python (from Aver)",
@@ -104,7 +109,8 @@ def plot_ranking(agg: dict, out_path: Path) -> None:
     values = [v["avg"] for _, v in items]
     err_lo = [v["avg"] - v["ci_lo"] for _, v in items]
     err_hi = [v["ci_hi"] - v["avg"] for _, v in items]
-    colors = [LANG_COLORS[lang] for (lang, _), _ in items]
+    colors = [LANG_COLORS[lang] if view == "full" else LANG_COLORS_MASKED[lang]
+              for (lang, view), _ in items]
     hatches = [VIEW_HATCH[view] for (_, view), _ in items]
 
     fig, ax = plt.subplots(figsize=(10, 6))

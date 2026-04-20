@@ -53,6 +53,13 @@ CLAUDE = ("opus", "sonnet", "haiku")
 GPT = ("gpt-4o", "gpt-4.1")
 LANGS = ["aver", "python_from_aver", "python_oop"]
 LANG_COLORS = {"aver": AMBER, "python_from_aver": SLATE, "python_oop": SLATE_MUTED}
+# Masked variants use lighter shades so full/masked are visually distinct
+# (hatching alone is invisible on darker colors)
+LANG_COLORS_MASKED = {
+    "aver": "#fbbf24",            # light amber (pale orange, clearly distinct from AMBER)
+    "python_from_aver": "#64748b",  # slate medium
+    "python_oop": "#cbd5e1",        # very light slate
+}
 LANG_LABELS = {"aver": "Aver", "python_from_aver": "Python (from Aver)", "python_oop": "Python (OOP)"}
 
 
@@ -277,7 +284,7 @@ def ablation_all_readers(out_path: Path) -> None:
 
         b1 = ax.bar(x - w / 2, full_vals, w, color=[LANG_COLORS[l] for l in langs],
                     edgecolor=SLATE, linewidth=1.0, label="full")
-        b2 = ax.bar(x + w / 2, mask_vals, w, color=[LANG_COLORS[l] for l in langs],
+        b2 = ax.bar(x + w / 2, mask_vals, w, color=[LANG_COLORS_MASKED[l] for l in langs],
                     edgecolor=SLATE, linewidth=1.0, hatch="////", label="masked")
         for bar, v in zip(b1, full_vals):
             ax.text(bar.get_x() + bar.get_width() / 2, v + 0.05, f"{v:.2f}",
@@ -518,7 +525,7 @@ def masked_vs_masked_spec(out_path: Path) -> None:
         deltas = [s - m for m, s in zip(m_vals, s_vals)]
 
         b1 = ax.bar(x - w / 2, m_vals, w,
-                    color=[LANG_COLORS[l] for l in langs],
+                    color=[LANG_COLORS_MASKED[l] for l in langs],
                     edgecolor=SLATE, linewidth=1.0, hatch="////", label="masked")
         b2 = ax.bar(x + w / 2, s_vals, w,
                     color=[LANG_COLORS[l] for l in langs],
@@ -583,7 +590,8 @@ def ranking_all_readers_ci(out_path: Path) -> None:
         cis = [ci(v) for _, v in items]
         err_lo = [m - lo for m, (lo, _) in zip(values, cis)]
         err_hi = [hi - m for m, (_, hi) in zip(values, cis)]
-        colors = [LANG_COLORS[lang] for (lang, _), _ in items]
+        colors = [LANG_COLORS[lang] if view == "full" else LANG_COLORS_MASKED[lang]
+                  for (lang, view), _ in items]
         hatches = ["" if view == "full" else "////" for (_, view), _ in items]
 
         x_pos = np.arange(len(items))
