@@ -2,7 +2,15 @@
 
 **An empirical benchmark for how much change-level author intent survives a code diff — measured with an LLM reviewer.**
 
-> **TL;DR:** ~11,000 judgments from a 6-model cross-vendor ensemble (Claude Opus 4.7 + Sonnet 4.6 + Haiku 4.5 + OpenAI gpt-4o + gpt-4.1 + Moonshot Kimi K2) across 5 non-thinking reader LLMs × 3 language variants × 18 refactor prompts × 3 views, plus a thinking-tier probe (Kimi K2.5). **100% judge coverage verified**. **Aver** — a new language with essentially zero LLM training exposure — reaches **parity within rubric noise** with a Python transliteration carrying the same intent structure on full diffs (4 of 5 readers inside the 0.11 noise floor; gap Δ aver−pfa of +0.04 / −0.03 / −0.08 / +0.02 on Sonnet / gpt-4.1 / Opus / Kimi K2). Only Gemini Flash (weakest reader) shows pfa leading clearly (−0.24). On masked diffs (prose stripped) Aver loses by 0.23–0.40 — narrative prose carries more signal in Aver than in Python. Loses on a 1300-line multi-module architectural refactor where heavy Python docstrings pull ahead; `verify` blocks (executable spec) carry no legibility signal beyond the narrative prose. **Replication-noise floor: 0.11** (measured directly via duplicated mask runs, see methodology). **Thinking-probe bonus**: K2.5 closes the aver/masked gap from −0.29 to −0.14 — structural intent recoverable without prose, if the reader thinks. Mixed result, honest rigor — v2 canonical rerun, α disclosure, bootstrap CIs, masked ablation, post-run coverage validation.
+> **TL;DR:** 5 non-thinking reader LLMs (4 vendors) × 6 cross-vendor judges × 18 refactor prompts × 3 language variants × 3 views, ~11k judgments, 100% coverage verified. **Aver** — a new language with essentially zero LLM training exposure — reads **within the 0.11 noise floor** of Aver-in-Python on 4 of 5 readers (Sonnet, Opus, gpt-4.1, Kimi K2); only Gemini Flash shows pfa leading clearly. On masked diffs (prose stripped) Aver loses by ~0.30 — but a thinking-tier probe (Kimi K2.5) closes half that gap, suggesting structural intent is recoverable without prose if the reader can reason.
+
+**Main ensemble (5 non-thinking readers across 4 vendors)** — per-reader ranking with 95% bootstrap CIs:
+
+![ranking — 5 non-thinking readers](results/plots/ranking_all_readers_ci.png)
+
+**Thinking-tier probe** — direct ablation between each thinking reader and its non-thinking counterpart (judges stay non-thinking; see Methodology):
+
+![thinking probe](results/plots/thinking_probe.png)
 
 This repo tests a claim from the [Aver language](https://averlang.dev) project: that **structurally declared intent** (signatures, description markers, decision blocks, verify blocks) makes code legible for AI review without special training on the language.
 
@@ -191,11 +199,9 @@ Google Gemini 2.5 Flash (reader):
 
 **Opus saturation observation**: Opus aver/full = 8.71 ≈ Sonnet aver/full = 8.72 (within 0.01). Aver "saturates" at Sonnet capability — adding top-tier reasoning doesn't extract more legibility from Aver. pfa and oop continue to rise with capability (Opus pfa 8.79, Opus oop 8.54), so the edge Pythons pull at the top is from training-prior exploitation on Python-specific patterns, not from reading more of the diff.
 
-### Ranking with 95% bootstrap CIs — all 5 readers
+### Ranking with 95% bootstrap CIs
 
-![ranking with CI — all 5 readers](results/plots/ranking_all_readers_ci.png)
-
-Error bars are 95% bootstrap confidence intervals over the N=18 per-cell slices (10k resamples). Top-of-ranking intervals overlap on every reader — this is the visual form of "parity within noise." (Sonnet-only version with identical data: `results/plots/ranking.png`.)
+Plot at the top of this README. Error bars are 95% bootstrap confidence intervals over the N=18 per-cell slices (10k resamples). Top-of-ranking intervals overlap on every reader — visual form of "parity within noise." (Sonnet-only version: `results/plots/ranking.png`.)
 
 ### Full cross-reader comparison
 
