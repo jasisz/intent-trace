@@ -304,11 +304,18 @@ def ablation_all_readers(out_path: Path) -> None:
         for bar, v in zip(b2, mask_vals):
             ax.text(bar.get_x() + bar.get_width() / 2, v + 0.05, f"{v:.2f}",
                     ha="center", va="bottom", fontsize=8, color=SLATE)
-        # Delta below each pair (amber intensity = drop size)
+        # Delta badges: bounding-box labels, visible regardless of bar height
         for i, d in enumerate(deltas):
-            color = AMBER_DARK if d < -0.3 else (AMBER if d < -0.1 else SLATE_MUTED)
-            ax.text(i, 7.05, f"Δ {d:+.2f}", ha="center", va="bottom",
-                    fontsize=9, fontweight="bold", color=color)
+            if abs(d) >= 0.30:
+                bg, fg = AMBER, "white"
+            elif abs(d) >= 0.10:
+                bg, fg = AMBER_LIGHT, SLATE
+            else:
+                bg, fg = SLATE_LIGHT, SLATE
+            ax.text(i, 7.08, f"Δ {d:+.2f}", ha="center", va="bottom",
+                    fontsize=10, fontweight="bold", color=fg,
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor=bg,
+                              edgecolor=SLATE, linewidth=0.8))
 
         ax.set_xticks(x)
         ax.set_xticklabels([LANG_LABELS[l] for l in langs], rotation=12, ha="right", fontsize=9)
