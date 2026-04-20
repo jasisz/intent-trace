@@ -228,7 +228,7 @@ READER_PATHS = {
 }
 READER_COLORS = {
     "Sonnet": AMBER,            # Anthropic — brand amber
-    "Opus": AMBER_DARK,         # Anthropic — dark amber
+    "Opus": "#0d9488",          # Anthropic — teal (distinct from Sonnet amber)
     "gpt-4.1": SLATE,           # OpenAI — slate
     "Gemini Flash": "#3b82f6",  # Google cloud — blue
     "Kimi K2": "#9333ea",       # Moonshot — purple
@@ -250,8 +250,8 @@ def plot_3way_readers(out_path: Path) -> None:
     labels = [f"{lang}\n{view}" for lang, view in cells]
 
     n_readers = len(readers_data)
-    bar_w = 0.18
-    fig, ax = plt.subplots(figsize=(15, 6.5))
+    bar_w = 0.14
+    fig, ax = plt.subplots(figsize=(17, 6.5))
     positions = range(len(cells))
     for i, (reader, d) in enumerate(readers_data.items()):
         values = [d[k]["avg"] if k in d else 0 for k in cells]
@@ -266,7 +266,7 @@ def plot_3way_readers(out_path: Path) -> None:
     ax.set_xticks(list(positions))
     ax.set_xticklabels(labels, fontsize=9)
     ax.set_ylabel("Average score (P+D)/2", fontweight="bold")
-    ax.set_title(f"Intent-trace: reader family dependence across {n_readers} vendors",
+    ax.set_title(f"Intent-trace: {n_readers} non-thinking readers across 5 model sources",
                  fontweight="bold", pad=15, color=SLATE)
     ax.set_ylim(7.0, 9.3)
     ax.legend(loc="lower right", frameon=True,

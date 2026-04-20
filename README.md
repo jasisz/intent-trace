@@ -2,7 +2,7 @@
 
 **An empirical benchmark for how much change-level author intent survives a code diff — measured with an LLM reviewer.**
 
-> ⚠️ **Key context: [Aver](https://averlang.dev) is a brand-new, unreleased programming language — LLMs have essentially zero training exposure to it.** No Aver code in training corpora, no tutorials, no Stack Overflow posts, no GitHub stars. This benchmark asks whether a new language's structural intent declarations (`intent`, `decision`, `?`, `verify`) are legible to an AI reviewer *without any training advantage* — compared against Python variants carrying the same intent structure.
+> ⚠️ **Key context: [Aver](https://averlang.dev) is a brand-new, recently-released programming language — LLMs have essentially zero training exposure to it.** No Aver code in training corpora, no tutorials, no Stack Overflow posts, minimal GitHub footprint (~20 stars at time of measurement). This benchmark asks whether a new language's structural intent declarations (`intent`, `decision`, `?`, `verify`) are legible to an AI reviewer *without any training advantage* — compared against Python variants carrying the same intent structure.
 >
 > **TL;DR:** Empirical benchmark of how much change-level author intent an LLM reviewer can reconstruct from a unified diff. 6 non-thinking reader LLMs across 5 model sources (Anthropic / OpenAI / Google / Moonshot / Google-OSS Gemma local) × 6 cross-vendor judges × 18 refactor prompts × 4 programs × 3 language variants (Aver, Aver-in-Python, idiomatic Python) × 3 views (full / masked / verify-preserving), plus separate thinking-tier probes. ~13,000 judgments, 100% judge coverage verified.
 
@@ -312,9 +312,7 @@ Thinking reader data: `results/merged/kimi2.5.jsonl` (126 slices, 100% coverage 
 
 ### Verify-preserving ablation (`masked_spec` vs `masked`)
 
-![masked vs masked_spec](results/plots/masked_vs_masked_spec.png)
-
-Addresses an asymmetry concern: `masked` strips Aver's `verify` blocks even though they're executable spec (like Python `assert`, which isn't stripped). `masked_spec` keeps `verify`, strips narrative only. Aver `masked → masked_spec` deltas: +0.06 / +0.17 / −0.17 / −0.10 across Sonnet / gpt-4.1 / Gemini / Kimi — all four inside the 0.11 replication-noise floor (or close to 2× of it). **Verify is spec, not review-time doc** — the legibility drop comes from narrative prose (`intent`/`decision`/`?`), not from `verify`. (For pfa/oop the same view is identical input to `masked` since `assert` isn't stripped, which is what gave us the noise floor measurement.)
+Addresses an asymmetry concern: `masked` strips Aver's `verify` blocks even though they're executable spec (like Python `assert`, which isn't stripped). `masked_spec` keeps `verify`, strips narrative only. Aver `masked → masked_spec` deltas: +0.06 / +0.17 / −0.17 / −0.10 across Sonnet / gpt-4.1 / Gemini / Kimi — all four inside the 0.11 replication-noise floor (or close to 2× of it). **Verify is spec, not review-time doc** — the legibility drop comes from narrative prose (`intent`/`decision`/`?`), not from `verify`. (For pfa/oop the same view is identical input to `masked` since `assert` isn't stripped, which is what gave us the noise floor measurement.) Numbers per reader visible in the "Full cross-reader comparison" table above (compare the `aver/masked` vs `aver/masked_spec` rows).
 
 ## Findings
 

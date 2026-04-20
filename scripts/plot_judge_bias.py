@@ -259,9 +259,20 @@ def judge_family_x_lang(out_path: Path) -> None:
 
 
 def ablation_all_readers(out_path: Path) -> None:
-    """Full → masked drop per language, grouped per reader."""
+    """Full → masked drop per language, grouped per reader.
+
+    Grid layout: 2×3 for 5-6 readers, 1×N for smaller counts (mirrors
+    ranking_all_readers_ci so comparable visual rhythm)."""
     n = len(READERS)
-    fig, axes = plt.subplots(1, n, figsize=(4.7 * n, 5.5), sharey=True)
+    if n >= 5:
+        ncols = 3
+        nrows = (n + ncols - 1) // ncols
+        fig, axes_grid = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5.2 * nrows), sharey=True)
+        axes = axes_grid.flatten() if nrows > 1 else axes_grid
+    else:
+        fig, axes = plt.subplots(1, n, figsize=(4.7 * n, 5.5), sharey=True)
+        if n == 1:
+            axes = [axes]
 
     for ax, (reader, path) in zip(axes, READERS.items()):
         rows = load_rows(path)
@@ -306,18 +317,38 @@ def ablation_all_readers(out_path: Path) -> None:
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
 
-    axes[0].set_ylabel("Average score (P+D)/2", fontweight="bold")
-    # Custom legend for hatch meaning
+    # Y-label on leftmost of each row
+    if n >= 5:
+        ncols_eff = 3
+        for row in range(0, len(axes), ncols_eff):
+            axes[row].set_ylabel("Average score (P+D)/2", fontweight="bold")
+    else:
+        axes[0].set_ylabel("Average score (P+D)/2", fontweight="bold")
+    # Hide extra axes if grid bigger than reader count
+    for extra_idx in range(len(READERS), len(axes)):
+        axes[extra_idx].set_visible(False)
+    # Custom legend for hatch meaning — attach to last visible axis
     from matplotlib.patches import Patch
     legend_items = [
         Patch(facecolor=SLATE_LIGHT, edgecolor=SLATE, label="full (prose included)"),
         Patch(facecolor=SLATE_LIGHT, edgecolor=SLATE, hatch="////", label="masked (prose stripped)"),
     ]
-    axes[-1].legend(handles=legend_items, loc="lower left", fontsize=9,
-                    frameon=True, facecolor=BG, edgecolor=SLATE_LIGHT)
+    axes[len(READERS) - 1].legend(handles=legend_items, loc="lower left", fontsize=9,
+                                   frameon=True, facecolor=BG, edgecolor=SLATE_LIGHT)
     fig.suptitle("Ablation: masking prose always hurts Aver most, OOP Python never",
-                 fontweight="bold", fontsize=12, y=1.02)
+                 fontweight="bold", fontsize=12, y=1.00)
     plt.tight_layout()
+    # Horizontal row separator for multi-row grids
+    if n >= 5 and len(axes) > 3:
+        fig.subplots_adjust(hspace=0.55)
+        import matplotlib.lines as mlines
+        top_row_bottom = axes[0].get_position().y0
+        bot_row_top = axes[3].get_position().y1
+        sep_y = (top_row_bottom + bot_row_top) / 2
+        sep = mlines.Line2D([0.05, 0.95], [sep_y, sep_y],
+                            color=SLATE, linewidth=1.0,
+                            transform=fig.transFigure, figure=fig)
+        fig.add_artist(sep)
     plt.savefig(out_path, dpi=150, facecolor=BG, bbox_inches="tight")
     print(f"wrote: {out_path}")
 
@@ -895,7 +926,6 @@ def main() -> None:
     program_lang_ranking(out_dir / "program_lang_ranking.png")
     program_complexity_advantage(out_dir / "program_complexity_advantage.png")
     program_reader_heatmap(out_dir / "program_reader_heatmap.png")
-    masked_vs_masked_spec(out_dir / "masked_vs_masked_spec.png")
     ranking_all_readers_ci(out_dir / "ranking_all_readers_ci.png")
     diff_type_stratification(out_dir / "diff_type_stratification.png")
     interjudge_heatmap(out_dir / "interjudge_heatmap.png")
