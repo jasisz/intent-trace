@@ -24,6 +24,7 @@ import numpy as np
 
 READERS = {
     "Sonnet":  "results/merged/sonnet.jsonl",
+    "Opus":    "results/merged/opus.jsonl",
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini":  "results/merged/gemini.jsonl",
     "Kimi K2": "results/merged/kimi.jsonl",

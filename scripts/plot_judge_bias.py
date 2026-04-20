@@ -38,6 +38,7 @@ mpl.rcParams.update({
 
 READERS = {
     "Sonnet": "results/merged/sonnet.jsonl",
+    "Opus": "results/merged/opus.jsonl",
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini": "results/merged/gemini.jsonl",
     "Kimi K2": "results/merged/kimi.jsonl",
@@ -509,8 +510,11 @@ def masked_vs_masked_spec(out_path: Path) -> None:
         langs = LANGS
         x = np.arange(len(langs))
         w = 0.38
-        m_vals = [mean(masked[l]) for l in langs]
-        s_vals = [mean(mspec[l]) for l in langs]
+        # Some readers (e.g. opus) have no masked_spec for pfa/oop because the
+        # skip-fix correctly avoids duplicate runs — fall back to masked mean
+        # (alias per canonical_load semantics) so the plot stays consistent.
+        m_vals = [mean(masked[l]) if masked[l] else 0 for l in langs]
+        s_vals = [mean(mspec[l]) if mspec[l] else (mean(masked[l]) if masked[l] else 0) for l in langs]
         deltas = [s - m for m, s in zip(m_vals, s_vals)]
 
         b1 = ax.bar(x - w / 2, m_vals, w,

@@ -214,15 +214,17 @@ def plot_ablation(agg: dict, out_path: Path) -> None:
 
 READER_PATHS = {
     "Sonnet": "results/merged/sonnet.jsonl",
+    "Opus": "results/merged/opus.jsonl",
     "gpt-4.1": "results/merged/gpt4.1.jsonl",
     "Gemini Flash": "results/merged/gemini.jsonl",
     "Kimi K2": "results/merged/kimi.jsonl",
 }
 READER_COLORS = {
-    "Sonnet": AMBER,         # Anthropic — brand amber
-    "gpt-4.1": SLATE,        # OpenAI — slate
+    "Sonnet": AMBER,            # Anthropic — brand amber
+    "Opus": AMBER_DARK,         # Anthropic — dark amber
+    "gpt-4.1": SLATE,           # OpenAI — slate
     "Gemini Flash": "#3b82f6",  # Google — blue
-    "Kimi K2": "#9333ea",    # Moonshot — purple
+    "Kimi K2": "#9333ea",       # Moonshot — purple
 }
 
 
