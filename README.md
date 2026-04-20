@@ -155,6 +155,16 @@ The **main ensemble** is 6 **non-thinking** readers + 6 non-thinking judges (sin
 - **Gemma 4 e4b (local 4B, Ollama)**: non-thinking open-source reader run fully locally on frozen weights — no cloud, no chance of training-corpus contamination mid-run.
 - **Claude Opus / Sonnet / Haiku judges**: non-thinking (no extended thinking flag).
 
+### Clean thinking-flag isolation via K2 snapshot
+
+Most thinking-vs-non-thinking comparisons in the wild confound two axes:
+(a) the thinking flag itself (extended chain-of-thought before final answer), and
+(b) generation / capability tier of the model (K2 → K2.5 is a newer model, Gemini Flash → Pro is a different tier entirely, e4b → 26b is 6.5× more parameters).
+
+Moonshot publishes **`kimi-k2-0905-preview`** (non-thinking) and **`kimi-k2-thinking`** as two serving modes of the same underlying snapshot — a rare opportunity to test the thinking flag with generation held constant. We use this pair as a **pure thinking-flag control**, and separately compare K2-0905 against K2.5 (newer generation + thinking, confounded) to quantify how much of the headline "thinking improvement" in the field is actually generational lift. See Finding #7 for the result.
+
+This methodology transfers: for any benchmark claiming "X improves with thinking," look for a same-snapshot same-weights thinking-flag-flipped pair. If the vendor doesn't publish one, the claim mixes thinking with generation — which the K2.5 and Gemini Pro-vs-Flash comparisons in this repo both do.
+
 **Separately**, we ran a **thinking-tier probe** with Kimi K2.5 as reader (thinking on; judges still non-thinking). See "Thinking-tier probe" section in Results — additional thinking probes (Kimi K2-thinking, Gemini 2.5 Pro, Gemma 4 26b) run in parallel; main ensemble and headline findings stay non-thinking.
 
 Real-world PR review bots, IDE assistants (Cursor, Claude Code, Copilot), CI checks — all use non-thinking models for latency (sub-second response). Benchmark matches that tier. A full "reasoning-tier benchmark" (all readers in thinking mode) is a separate open direction and estimated at ~$1,500+ in API costs.
@@ -333,7 +343,17 @@ Read these as statements about the specific setup described above — 6 reader f
 
 6. **Per-item inter-judge agreement is low and got lower with the 6th judge** (α_ord pooled across 6 readers × 918 items: **P-axis 0.42, D-axis 0.15** with Kimi added; previously 0.54 / 0.28 on the 5-judge panel). Both well below the 0.67 "tentative" threshold. Pairwise Spearman ρ̄ ≈ 0.52 on P. Kimi judge correlates ~0.38–0.41 with the others on P-axis (vs 0.65–0.73 within the Claude family), so adding it diluted the ensemble's internal consistency — in exchange for true cross-vendor diversity (panel now spans Anthropic / OpenAI / Moonshot rather than 3 Anthropic + 2 OpenAI). **Interval α is higher and rises to 0.53 on P-axis / 0.37 on D-axis** — judges rank items consistently even when absolute scores drift. Judges still agree on *ranking* (Spearman stays positive, cell means stable within noise floor), but fine-grained per-slice claims aren't trustworthy. Noteworthy: Gemma reader produces the highest per-reader α_int (P=0.67, D=0.56) — its terser, more declarative guesses are easier for judges to score consistently. Human raters on a stratified subsample remain the single cleanest remaining improvement.
 
-7. **(DRAFT — finalize after thinking probe runs complete)** The thinking vs non-thinking asymmetry on Aver/masked (non-thinking loses ~0.30 vs pfa; three independent thinking probes — K2.5, K2-thinking, Gemini Pro — close or reverse that gap) reads as an **empirical cognitive-load result**. A "quick-pass" reviewer (non-thinking, limited compute, human skim analogue) cannot recover Aver's intent from code structure alone — needs the prose layer. A "deep-analyst" reviewer (thinking budget, time to reason) *can* recover it from structure alone. This is the mechanism behind Aver's `aver check` enforcement of prose coverage: not because the compiler needs it, but because a reviewer with limited budget does. Python could enforce the same but leaves it to convention, which drifts — so Aver's guaranteed-prose keeps cognitive load constant across codebase age, while Python's docstring rot makes cognitive load grow. Needs 2–3 more data points before calling it definitive (currently: K2.5 +0.28, K2-thinking +0.50, Gemini Pro +0.48 on aver/masked Δ vs non-thinking counterpart, all N≤18).
+7. **Capability tier closes the Aver/masked gap; pure thinking flag alone does not.** Three thinking-tier probes, only one of which cleanly isolates the thinking flag from generation/size:
+
+   - **K2-0905 (non-thinking) → K2-thinking (same snapshot, thinking flag flipped only)** — Moonshot publishes both as serving modes of the same underlying model, a rare opportunity for a pure thinking-flag control. Deltas on all 7 (lang, view) cells, N=18 matched prompts: aver/full **−0.12**, aver/masked **0.00** (exactly), aver/masked_spec **−0.06**, pfa/full **+0.19**, pfa/masked **−0.08**, oop/full **+0.11**, oop/masked **−0.11**. **All inside the 0.11 noise floor. Pure thinking flip ≈ zero on every metric.**
+   - **K2-0905 → K2.5 (newer generation, also thinking)** — same matched-prompt comparison: +0.20, +0.29, +0.38, +0.27, +0.11, +0.35, +0.12. **Consistent +0.11–0.38 lift across every cell** — but generation and thinking are confounded.
+   - **Gemma 4 e4b (4B non-thinking) → Gemma 26b (6.5× larger + thinking)**, N=16/18 prompts currently: aver/full −0.14, aver/masked +0.52, pfa/full +0.20, oop/masked +0.82. Similar pattern — significant lift on most cells, size/thinking confounded.
+
+   **The clean test kills the "thinking closes the gap" hypothesis.** Comparing K2.5 to K2-thinking on the same 18 prompts: K2.5 gains +0.29 on aver/masked, K2-thinking gains 0.00 — so the ~+0.30 gap-closing visible in K2.5 is entirely generational, not the thinking flag.
+
+   **Implication for the Aver thesis.** Aver's prose layer is most load-bearing for **quick-pass readers** — PR review bots, IDE assistants (Cursor, Claude Code, Copilot), CI hooks — all running non-thinking cloud tiers for latency. Deep-analyst tier (thinking + top capability) recovers structural intent even when prose is stripped. Aver's `aver check` enforcement of prose coverage directly protects the quick-pass tier that industrial code review actually uses; Python leaves the same structure to convention, which drifts.
+
+   **Anomaly worth naming.** Aver/full appears to saturate at small non-thinking capability: Gemma e4b full=8.40 ≈ Gemma 26b full=8.27 (on 16 prompts, within noise); Opus full=8.71 ≈ Sonnet full=8.72 (within 0.01). Adding capability lifts pfa and oop on full diffs, and lifts every variant on masked, but extracts nothing more from Aver's full-diff form. Aver's declarative signature + prose on full diffs appears to be low-cognitive-load-to-reconstruct; the headroom lives in masked cells.
 
 ## Why this experiment even exists
 
