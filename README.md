@@ -4,6 +4,8 @@
 
 > ⚠️ **Key context: [Aver](https://averlang.dev) is a brand-new, recently-released programming language — LLMs have essentially zero training exposure to it.** No Aver code in training corpora, no tutorials, no Stack Overflow posts, minimal GitHub footprint (~20 stars at time of measurement). This benchmark asks whether a new language's structural intent declarations (`intent`, `decision`, `?`, `verify`) are legible to an AI reviewer *without any training advantage* — compared against Python variants carrying the same intent structure.
 >
+> ⚠️ **No priming, no language context.** Readers receive the raw unified diff only — **no syntax guide, no language description, no system prompt explaining what Aver is, no few-shot examples, no grammar reference**. The reader must reconstruct intent entirely from the artifact itself. Python readers get the same treatment (no special hint that it's Python). This is deliberate: we're testing whether the artifact carries legibility on its own, not whether a primed LLM can parse it.
+>
 > **TL;DR:** Empirical benchmark of how much change-level author intent an LLM reviewer can reconstruct from a unified diff. 6 non-thinking reader LLMs across 5 model sources (Anthropic / OpenAI / Google / Moonshot / Google-OSS Gemma local) × 6 cross-vendor judges × 18 refactor prompts × 4 programs × 3 language variants (Aver, Aver-in-Python, idiomatic Python) × 3 views (full / masked / verify-preserving), plus separate thinking-tier probes. ~13,000 judgments, 100% judge coverage verified.
 
 ![ranking — 6 non-thinking readers](results/plots/ranking_all_readers_ci.png)
