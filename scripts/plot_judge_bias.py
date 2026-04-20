@@ -57,8 +57,8 @@ LANG_COLORS = {"aver": AMBER, "python_from_aver": SLATE, "python_oop": SLATE_MUT
 # (hatching alone is invisible on darker colors)
 LANG_COLORS_MASKED = {
     "aver": "#fbbf24",            # light amber (pale orange, clearly distinct from AMBER)
-    "python_from_aver": "#64748b",  # slate medium
-    "python_oop": "#cbd5e1",        # very light slate
+    "python_from_aver": "#94a3b8",  # slate-400 — light enough for SLATE hatch to be visible
+    "python_oop": "#e2e8f0",        # slate-200 — very light for the muted baseline
 }
 LANG_LABELS = {"aver": "Aver", "python_from_aver": "Python (from Aver)", "python_oop": "Python (OOP)"}
 
@@ -590,9 +590,13 @@ def ranking_all_readers_ci(out_path: Path) -> None:
         cis = [ci(v) for _, v in items]
         err_lo = [m - lo for m, (lo, _) in zip(values, cis)]
         err_hi = [hi - m for m, (_, hi) in zip(values, cis)]
+        # Different hatch per lang so masked variants stay distinguishable
+        # even when two masked bars sit adjacent.
+        HATCH_BY_LANG = {"aver": "////", "python_from_aver": "xxxx", "python_oop": "...."}
         colors = [LANG_COLORS[lang] if view == "full" else LANG_COLORS_MASKED[lang]
                   for (lang, view), _ in items]
-        hatches = ["" if view == "full" else "////" for (_, view), _ in items]
+        hatches = ["" if view == "full" else HATCH_BY_LANG[lang]
+                   for (lang, view), _ in items]
 
         x_pos = np.arange(len(items))
         bars = ax.bar(x_pos, values, color=colors, edgecolor=SLATE, linewidth=1.0,

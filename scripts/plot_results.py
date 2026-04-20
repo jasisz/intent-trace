@@ -27,8 +27,8 @@ LANG_COLORS = {
 }
 LANG_COLORS_MASKED = {
     "aver": "#fbbf24",              # light amber — visibly distinct from full AMBER
-    "python_from_aver": "#64748b",  # slate medium
-    "python_oop": "#cbd5e1",         # very light slate
+    "python_from_aver": "#94a3b8",  # slate-400 — light enough for SLATE hatch to be visible
+    "python_oop": "#e2e8f0",         # slate-200 — very light for the muted baseline
 }
 LANG_LABELS = {
     "aver": "Aver",
