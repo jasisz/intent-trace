@@ -827,13 +827,21 @@ def thinking_probe(out_path: Path) -> None:
                     ax.text(bar.get_x() + bar.get_width()/2, v + 0.04,
                             f"{v:.2f}", ha="center", va="bottom",
                             fontsize=8, color=SLATE)
+        # Delta badges: bounding-box labels below each cell, visible regardless of bar height
         for i, d in enumerate(deltas):
-            color = AMBER_DARK if abs(d) >= 0.20 else (AMBER if abs(d) >= 0.1 else SLATE_MUTED)
-            ax.text(i, 7.05, f"Δ {d:+.2f}", ha="center", va="bottom",
-                    fontsize=9, fontweight="bold", color=color)
+            if abs(d) >= 0.20:
+                bg, fg = AMBER, "white"
+            elif abs(d) >= 0.10:
+                bg, fg = AMBER_LIGHT, SLATE
+            else:
+                bg, fg = SLATE_LIGHT, SLATE
+            ax.text(i, 7.12, f"Δ {d:+.2f}", ha="center", va="bottom",
+                    fontsize=10, fontweight="bold", color=fg,
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor=bg,
+                              edgecolor=SLATE, linewidth=0.8))
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=9)
-        ax.set_ylim(7.0, 9.2)
+        ax.set_ylim(7.0, 9.3)
         ax.set_ylabel("Average (P+D)/2", fontweight="bold")
         ax.legend(loc="upper right", frameon=True, facecolor=BG, edgecolor=SLATE_LIGHT)
         ax.set_title(f"{name_t} vs {name_nt}", fontweight="bold", fontsize=11)
