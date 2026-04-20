@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inter-judge agreement on the existing 5-judge ensemble.
+"""Inter-judge agreement on the existing 6-judge ensemble.
 
 For each (reader, axis), build a judges × items matrix of individual scores
 and compute:
@@ -71,7 +71,7 @@ def fmt(v: float) -> str:
 
 
 def main() -> None:
-    print("\n=== Inter-judge agreement (prompt/diff axes, 5-judge panel) ===\n")
+    print("\n=== Inter-judge agreement (prompt/diff axes, 6-judge panel) ===\n")
     print(f'{"reader":<10} {"axis":<24} {"n_items":>8} {"α_ord":>8} {"α_int":>8} {"ρ̄ pairs":>10}')
     for reader, path in READERS.items():
         for axis_key, axis_label in AXES_PD:
