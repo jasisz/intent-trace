@@ -35,9 +35,9 @@ READERS = [
 ]
 
 SERIES = [
-    ("aver",             "Aver",                       AMBER),
-    ("python_from_aver", "Python (faithful translit.)", TEAL),
-    ("python_oop",       "Python (idiomatic OOP)",     GRAY),
+    ("aver",             "Aver",                           AMBER),
+    ("python_from_aver", "Python (faithful transliteration)", TEAL),
+    ("python_oop",       "Python (idiomatic OOP)",         GRAY),
 ]
 
 mpl.rcParams.update({
@@ -88,9 +88,11 @@ def build_plot(out_path: Path, *, with_ci: bool) -> None:
     data = {name: load_full_scores(path) for name, path in READERS}
     n_readers = len(READERS)
 
-    fig, ax = plt.subplots(figsize=(15, 8))
+    fig, ax = plt.subplots(figsize=(17, 8))
+    # Wider spacing between reader groups: each group centered on an integer x,
+    # inter-group gap = 1.0 - 3 * bar_w (so 1 - 0.66 = 0.34, >2× the old gap).
     x_positions = list(range(n_readers))
-    bar_w = 0.26
+    bar_w = 0.22
 
     for i, (lang, label, color) in enumerate(SERIES):
         values = [mean(data[reader][lang]) for reader, _ in READERS]
@@ -150,7 +152,7 @@ def build_plot(out_path: Path, *, with_ci: bool) -> None:
     # Light annotation: Aver tracks Python-transliteration, above idiomatic OOP
     ax.text(
         0.98, 0.97,
-        "Aver  ≈  Python (faithful translit.)  >  Python (OOP)",
+        "Aver  ≈  Python (faithful transliteration)  >  Python (OOP)",
         transform=ax.transAxes,
         fontsize=12.5, fontweight="bold", color=SLATE,
         ha="right", va="top",
